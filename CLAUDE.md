@@ -4,10 +4,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project state
 
-**Phase 0 is complete** (skeleton and logging spine); Phase 1 is next. Before writing any
-code, re-read `plan.md` in full; it is the authoritative spec for architecture, phase scope,
-and exit criteria. Do not paraphrase or summarize it away — refer back to it directly each
-session.
+**Phase 1 is complete** (game module contract, two hand-written games, self-play harness);
+Phase 2 is next. Before writing any code, re-read `plan.md` in full; it is the authoritative
+spec for architecture, phase scope, and exit criteria. Do not paraphrase or summarize it
+away — refer back to it directly each session.
 
 The code lives in a `src/` layout under a single `automa` package, so the repository root
 holds only `src/`, `tests/`, `docs/`, and `trajectories/`. This deviates from the flat
@@ -179,16 +179,55 @@ Environment: Python 3.12, `.venv` at the repo root, editable install.
 .venv\Scripts\python -m ruff check .
 .venv\Scripts\python -m automa.scripts.hello_llm      # or: automa-hello
 .venv\Scripts\python -m automa.trajectory.show <file> # or: automa-show
+.venv\Scripts\python -m automa.scripts.validate_games --matches 500 \
+    --json docs/validation/phase1.json                # or: automa-validate
 ```
 
 - `python -m automa.eval.run --target baseline` and `--target agent` (Phase 3) run the
   same fixed case battery against the baseline and the Automa solution and produce
   comparable JSON output.
-- The game module contract is fixed: `initial_state()`, `legal_actions(state)`,
-  `apply(state, action)`, `is_terminal(state)`, `winner(state)`, `describe_state(state, viewer)`.
+- The game module contract lives in `src/automa/core/game.py` as a `Protocol` whose members
+  are all `@staticmethod` — a game is a *module*, not an instance, and without that no module
+  can structurally match. It is `initial_state(seed=None)`, `legal_actions(state)`,
+  `apply(state, action)`, `is_terminal(state)`, `winner(state)`,
+  `describe_state(state, viewer)`, plus optional `check_invariants(state)`. Three deviations
+  from the six methods `plan.md` names, each sanctioned by "if the interface needs to change
+  to fit the second game, change it now": `seed` (Phase 3 needs reproducible fixtures, and
+  shuffling once at setup is what keeps `apply` pure), `check_invariants` (the core cannot
+  know generically that a game conserves its components, so the module declares it), and the
+  `NAME` / `PLAYERS` constants. `winner` returns `None` for a draw *only*, and raises
+  `ValueError` off-terminal.
+- Every state carries three core-owned keys: `to_play`, `turn` (player turns, non-decreasing)
+  and `ply` (applications of `apply`, strictly increasing). `ply` is what bounds a match;
+  `turn` cannot, because a multi-step action advances the state without advancing the turn.
+  The optional `pending` key is how a sub-decision belonging to the player whose turn it
+  *isn't* is expressed.
 - Every LLM call must go through `automa.llm.call_llm`, which logs agent name, full
   prompt, full response, tokens, cost, latency, and retries to a per-match JSONL
   trajectory. Never call a provider SDK directly from anywhere else.
+
+### Games
+
+`nim` and `dnup`, chosen to be structurally distant so the interface cannot be shaped by
+one of them. Nim has no hand, no deck and no hidden information; DNUP has hidden hands, a
+contested shared table and two play areas per player. Nim also carries `optimal_actions()`
+— **outside** the contract, never used in play — which gives Phase 3 and Phase 6 a
+perfect-play oracle, so decision *quality* is measurable and not just legality.
+
+`dnup` implements the two-player mode of a real published game (Asmodee). Per invariant 6
+the rulebook lives in the gitignored `files/` directory and **no rule text, card text or
+scan is reproduced anywhere in the repository** — the module implements mechanics and
+paraphrases in its docstring. The rulebook does not list the deck, so `DECK` was
+transcribed from the physical cards. Its skew is load-bearing and pinned by a test: low
+values are plentiful (1 and 2 appear seven times each), high values scarce (8 four times,
+9 three, 10 exactly once, so a value-10 set can never exceed one card). One thing remains
+an assumption, labelled in the module: deal orientation is taken to be random, which is
+what happens physically but is not stated in the rules.
+
+The same rulebook is the Phase 4 compiler's input, which is why a real game is worth more
+here than an invented one: "the compiler reproduces the hand-written module" becomes a test
+against rules somebody else wrote. Note the rulebook PDF is an **image-only scan** with no
+text layer, so Phase 4's ingestion cannot assume `pdftotext` will work.
 
 ### Agent contracts
 
@@ -218,6 +257,20 @@ module under `src/automa/core/` and fails if one imports `anthropic`, `automa.ll
 other provider SDK. If that test starts failing, the project's central architectural claim
 has stopped being true — fix the import, do not relax the test. Invariant 3 holds because
 `call_llm` is the only function that talks to a model.
+
+Invariant 4 is the same walk over the same files but a different claim, so it lives in
+`tests/test_core_is_game_agnostic.py`; both share the walker in `tests/_ast_imports.py`.
+Read precisely, invariant 4 forbids a *static* dependency: game code obviously runs, since
+the core calls it to enumerate legal actions every turn, but nothing under `automa.core` may
+name a particular game. `automa/core/loader.py` is where that line is drawn — it resolves
+`automa.games.<name>` through `importlib` at runtime, and the test is what stops anyone
+"simplifying" that into a plain import.
+
+Invariant 5 has nothing to bite on yet. Neither Phase 1 game has card effects (Nim has no
+cards; DNUP's cards are value pairs), so the effect-vocabulary ground truth is deferred to
+Phase 5 as a named deliverable rather than being a Phase 1 gap. Likewise the `pending`
+convention is used by no shipped game, so it is exercised only by the deliberately broken
+modules in `tests/test_selfplay.py` — an untested convention would be worse than none.
 
 ## Git
 

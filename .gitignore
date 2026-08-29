@@ -17,3 +17,4 @@ dist/
 # `git add -f trajectories/<file>.jsonl`.
 trajectories/*.jsonl
 !trajectories/.gitkeep
+files/

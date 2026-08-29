@@ -1,0 +1,42 @@
+{
+  "matches_per_game": 500,
+  "seed0": 0,
+  "max_plies": 1000,
+  "ok": true,
+  "games": [
+    {
+      "game": "dnup",
+      "matches": 500,
+      "max_plies": 1000,
+      "outcomes": {
+        "terminal": 500
+      },
+      "winners": {
+        "automa": 244,
+        "human": 256
+      },
+      "ply_min": 58,
+      "ply_median": 145.0,
+      "ply_max": 325,
+      "violations": [],
+      "ok": true
+    },
+    {
+      "game": "nim",
+      "matches": 500,
+      "max_plies": 1000,
+      "outcomes": {
+        "terminal": 500
+      },
+      "winners": {
+        "human": 238,
+        "automa": 262
+      },
+      "ply_min": 3,
+      "ply_median": 6.0,
+      "ply_max": 12,
+      "violations": [],
+      "ok": true
+    }
+  ]
+}
