@@ -78,13 +78,19 @@ def render(path: Path, limit: int | None) -> str:
                 lines.append(f"  [rejected] {e['rejection']}")
             if e.get("error"):
                 lines.append(f"  [error] {e['error']}")
-            cost = e.get("cost_usd")
-            cost_str = "unpriced" if cost is None else f"${cost:.6f}"
-            lines.append(
-                f"  [usage] in={e.get('input_tokens')} out={e.get('output_tokens')} "
-                f"cost={cost_str} ({e.get('pricing_note')}) "
-                f"latency={e.get('latency_ms')}ms stop={e.get('stop_reason')}"
-            )
+            # An attempt that never returned has no tokens or price; printing
+            # "in=None cost=unpriced" there reads like a pricing bug rather than a
+            # failed call, so show only what the attempt actually produced.
+            if e.get("input_tokens") is None and e.get("output_tokens") is None:
+                lines.append(f"  [usage] no response; latency={e.get('latency_ms')}ms")
+            else:
+                cost = e.get("cost_usd")
+                cost_str = "unpriced" if cost is None else f"${cost:.6f}"
+                lines.append(
+                    f"  [usage] in={e.get('input_tokens')} out={e.get('output_tokens')} "
+                    f"cost={cost_str} ({e.get('pricing_note')}) "
+                    f"latency={e.get('latency_ms')}ms stop={e.get('stop_reason')}"
+                )
 
         elif etype == "run_end":
             total = e.get("total_cost_usd")
@@ -92,8 +98,10 @@ def render(path: Path, limit: int | None) -> str:
             lines.append(RULE)
             lines.append(f"{head}  outcome={e.get('outcome')} wall={e.get('wall_ms')}ms")
             cost_str = f"${total:.6f}" if total is not None else "n/a"
+            failed = e.get("failed_attempts") or 0
             lines.append(
-                f"      llm_calls={e.get('llm_calls')} "
+                f"      llm_calls={e.get('llm_calls')}"
+                f"{f' (+{failed} failed attempts)' if failed else ''} "
                 f"tokens in={e.get('total_input_tokens')} out={e.get('total_output_tokens')} "
                 f"total_cost={cost_str}"
             )

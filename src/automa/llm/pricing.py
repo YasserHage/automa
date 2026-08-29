@@ -32,8 +32,12 @@ PRICES: dict[str, Price] = {
     "anthropic:claude-opus-5": Price(5.00, 25.00),
     "anthropic:claude-sonnet-5": Price(2.00, 10.00),
     "anthropic:claude-haiku-4-5": Price(1.00, 5.00),
-    # A free-tier provider is added here with free_tier=True when one is wired up,
-    # e.g. Price(0.0, 0.0, free_tier=True). See llm/providers/gemini_provider.py.
+    # Gemini, on the free tier. The same model on a paid tier is NOT free: if you
+    # move off the free tier, replace this entry with Google's published rates, or
+    # every cost-per-turn figure in the changelog silently becomes zero. The
+    # `free_tier` label is emitted into each trajectory event as `pricing_note`,
+    # so the assumption is visible in the evidence rather than buried here.
+    "google:gemini-3.6-flash": Price(0.0, 0.0, free_tier=True),
 }
 
 # Cache pricing is a multiple of the input rate.

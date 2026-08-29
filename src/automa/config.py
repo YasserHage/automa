@@ -19,19 +19,58 @@ load_dotenv()
 REPO_ROOT = Path(__file__).resolve().parents[2]
 TRAJECTORY_DIR = Path(os.environ.get("AUTOMA_TRAJECTORY_DIR", REPO_ROOT / "trajectories"))
 
-# Per-role models. The Strategist and Compiler reason hard but run rarely, so they
-# get the strongest model. The Tactician runs on every single turn and cost per turn
-# is a reported metric, so it starts on the cheapest model that can pick an index
-# from an enumerated list.
+# Per-role models. Every role runs on Gemini Flash for now. Two consequences worth knowing:
+#
+#   * Cost per turn is ~$0, so the free tier's rate limits, not cost, are the
+#     binding constraint on how fast the evaluation battery can run.
+#   * Baseline and solution share one model, which makes the Phase 3 comparison
+#     fair by construction - there is no "the agent got a better model" objection
+#     to answer, and no resource difference to disclose.
+#
+# The Anthropic backend stays fully implemented, so switching a role back is a
+# one-line change here or an AUTOMA_MODEL_<ROLE> override.
 DEFAULT_MODELS: dict[str, str] = {
-    "strategist": "anthropic:claude-opus-5",
-    "compiler": "anthropic:claude-opus-5",
-    "tactician": "anthropic:claude-haiku-4-5",
-    # The baseline must be a *fair* comparison, not a strawman, so it gets a capable
-    # model even though that makes the solution's win harder to show. See plan.md
-    # Phase 3.
-    "baseline": "anthropic:claude-opus-5",
+    "strategist": "google:gemini-3.6-flash",
+    "compiler": "google:gemini-3.6-flash",
+    "tactician": "google:gemini-3.6-flash",
+    # The baseline must be a *fair* comparison, not a strawman. Same model as the
+    # solution's agents; the difference under test is the architecture, not the
+    # model. See plan.md Phase 3.
+    "baseline": "google:gemini-3.6-flash",
 }
+
+
+# Credentials are per provider, never shared. A match may legitimately run two
+# providers at once - Strategist on one, Tactician on another - so a single generic
+# key could not express the configuration this project supports. Each SDK also
+# resolves its own variable by convention, so these names are not ours to choose.
+PROVIDER_CREDENTIALS: dict[str, str] = {
+    "anthropic": "ANTHROPIC_API_KEY",
+    "google": "GEMINI_API_KEY",
+}
+
+
+class MissingCredentialError(RuntimeError):
+    """A provider was selected but its API key is not set."""
+
+
+def require_credentials(provider: str) -> None:
+    """Fail early and legibly when a provider's key is absent.
+
+    Without this the failure surfaces from inside the vendor SDK at call time,
+    which is a poor first experience for anyone running the project from a clean
+    environment - and being runnable from a clean environment is a graded
+    requirement, not a nicety.
+    """
+    var = PROVIDER_CREDENTIALS.get(provider)
+    if var is None:
+        return  # unknown provider; resolve() reports that with a better message
+    if not os.environ.get(var):
+        raise MissingCredentialError(
+            f"{var} is not set, but a '{provider}' model was requested. "
+            f"Add it to {REPO_ROOT / '.env'} (see .env.example) or set it in your "
+            f"environment. Keys are per provider - see PROVIDER_CREDENTIALS."
+        )
 
 
 def model_for(role: str) -> str:

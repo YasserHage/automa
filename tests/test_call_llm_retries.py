@@ -180,10 +180,17 @@ def test_retryable_transport_error_is_logged_then_retried(install_provider, tmp_
         path = traj.path
 
     assert result.attempts == 2
-    calls = [e for e in read_events(path) if e["type"] == "llm_call"]
+    events = read_events(path)
+    calls = [e for e in events if e["type"] == "llm_call"]
     assert calls[0]["outcome"] == "api_error"
     assert "connection reset" in calls[0]["error"]
     assert calls[1]["outcome"] == "ok"
+
+    # A failed attempt is not a completed exchange, but the run must still show
+    # that retrying was needed - otherwise a flaky provider looks free.
+    end = events[-1]
+    assert end["llm_calls"] == 1
+    assert end["failed_attempts"] == 1
 
 
 def test_non_retryable_error_propagates(install_provider) -> None:

@@ -86,6 +86,10 @@ class TrajectoryWriter:
         self.total_input_tokens = 0
         self.total_output_tokens = 0
         self.llm_calls = 0
+        # Attempts that never produced a response (transport failures, rate limits).
+        # Counted separately so `llm_calls` stays a count of real exchanges while the
+        # run still shows how much retrying it took to get them.
+        self.failed_attempts = 0
 
     # -- lifecycle ---------------------------------------------------------
 
@@ -123,6 +127,7 @@ class TrajectoryWriter:
             outcome="error" if exc is not None else "ok",
             wall_ms=round((time.monotonic() - (self._started or time.monotonic())) * 1000, 1),
             llm_calls=self.llm_calls,
+            failed_attempts=self.failed_attempts,
             total_cost_usd=round(self.total_cost_usd, 6),
             unpriced_calls=self.unpriced_calls,
             total_input_tokens=self.total_input_tokens,
@@ -163,3 +168,7 @@ class TrajectoryWriter:
             self.unpriced_calls += 1
         else:
             self.total_cost_usd += cost_usd
+
+    def record_failed_attempt(self) -> None:
+        """Note an attempt that never came back with a response."""
+        self.failed_attempts += 1

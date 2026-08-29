@@ -79,6 +79,7 @@ def call_llm(
     model_id = model or config.model_for(agent)
     provider_name, bare_model = split_model(model_id)
     provider = resolve(provider_name)
+    config.require_credentials(provider_name)
 
     attempt_messages = list(messages)
     last_rejection: str | None = None
@@ -111,6 +112,8 @@ def call_llm(
                 error=f"{type(exc).__name__}: {exc}",
                 tags=tags,
             )
+            if trajectory is not None:
+                trajectory.record_failed_attempt()
             if attempt < max_attempts and provider.is_retryable(exc):
                 last_rejection = f"{type(exc).__name__}: {exc}"
                 continue

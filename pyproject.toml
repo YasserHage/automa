@@ -11,6 +11,7 @@ requires-python = ">=3.11"
 # the same result, and a floating range does not guarantee that.
 dependencies = [
     "anthropic==1.2.0",
+    "google-genai==2.20.0",
     "pydantic==2.13.5",
     "python-dotenv==1.2.3",
 ]

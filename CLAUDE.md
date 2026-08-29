@@ -159,7 +159,7 @@ src/automa/
   llm/               the only code that reaches a model
     call.py          call_llm() — the single wrapper (invariant 3)
     pricing.py       priced / free-tier / unknown, kept strictly apart
-    providers/       vendor seam: base protocol, anthropic (done), gemini (stub)
+    providers/       vendor seam: base protocol, gemini (default), anthropic
   trajectory/        JSONL event log + `show` renderer   <- code
   agents/            Tactician (Phase 2), Strategist (Phase 6)
   games/             hand-written game modules (Phase 1)
@@ -198,11 +198,18 @@ can influence the game is reviewable at a glance. Pass one as `output_format=` t
 `call_llm`; it comes back validated on `result.parsed`. The module imports only Pydantic,
 so `automa.core` may depend on it without breaching invariants 1 and 2.
 
-Do not add a second structured-output layer (e.g. `instructor`) on the Anthropic path:
-`client.messages.parse` covers it natively and `call_llm` already removes parsing from
-every caller. If `instructor` is adopted for Gemini, disable its retries — `call_llm`
-owns retry-with-feedback, and a nested loop would hide attempts from the trajectory,
-breaking invariant 3. See the docstring in `llm/providers/gemini_provider.py`.
+Do not add a second structured-output layer (e.g. `instructor`). Both providers cover it
+natively — `client.messages.parse` on Anthropic, `response_schema` on Gemini — and
+`call_llm` already removes parsing from every caller, so instructor was evaluated and
+dropped as redundant. If it is ever reintroduced, disable its retries: `call_llm` owns
+retry-with-feedback, and a nested loop would hide attempts from the trajectory, breaking
+invariant 3.
+
+**Models.** Every role defaults to `google:gemini-3.6-flash` (free tier). Two things
+follow: rate limits and availability, not cost, are the binding constraint — a real 503
+and a 21-second stall showed up in the very first run — and the Phase 3 baseline shares
+the agents' model, so that comparison tests the architecture rather than the model.
+`gemini-2.5-flash` is retired for new API keys; do not reintroduce it.
 
 ### How the invariants are enforced
 

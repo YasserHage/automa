@@ -29,8 +29,12 @@ Requires Python 3.11+ (developed and pinned against 3.12).
 ```bash
 py -3.12 -m venv .venv
 .venv\Scripts\python -m pip install -e ".[dev]"
-copy .env.example .env      # then add your ANTHROPIC_API_KEY
+copy .env.example .env      # then add your GEMINI_API_KEY
 ```
+
+Every role runs on `google:gemini-3.6-flash` by default, so a Gemini API key is all you
+need. The Anthropic backend is fully implemented too — point any role at it with
+`AUTOMA_MODEL_<ROLE>=anthropic:claude-opus-5` and set `ANTHROPIC_API_KEY`.
 
 ## Commands
 
@@ -52,7 +56,7 @@ All code lives under one package, so the repository root stays to four directori
 |---|---|
 | `src/automa/core/` | Deterministic zone. Never imports a model client — enforced by a test. |
 | `src/automa/llm/` | The single call wrapper every model call passes through, plus pricing. |
-| `src/automa/llm/providers/` | Provider seam. Anthropic implemented; Gemini stubbed. |
+| `src/automa/llm/providers/` | Provider seam. Gemini and Anthropic both implemented. |
 | `src/automa/trajectory/` | JSONL event log — one file per run — and a reader. |
 | `src/automa/agents/` | Tactician (Phase 2), Strategist (Phase 6). |
 | `src/automa/compiler/` | Rule material → executable game module (Phase 4). |

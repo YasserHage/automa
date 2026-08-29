@@ -58,7 +58,9 @@ def main() -> int:
             ],
             output_format=TacticianResponse,
             validate=must_be_legal,
-            max_tokens=1024,
+            # Generous: on Gemini, thinking tokens come out of this same budget, so
+            # a tight cap can be spent reasoning and return no answer at all.
+            max_tokens=2048,
             trajectory=traj,
         )
 

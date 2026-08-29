@@ -1,62 +1,151 @@
-"""Google Gemini backend - NOT IMPLEMENTED.
+"""Google Gemini backend.
 
-Placeholder for running the per-turn Tactician on Gemini Flash's free tier, which
-would take cost per turn to zero for the highest-frequency agent in the system.
+Written against the installed ``google-genai`` SDK surface rather than from
+memory: config fields, usage-metadata names and error classes were all read off
+the package before this was implemented.
 
-To implement, the following must be filled in from Google's own SDK documentation
-rather than guessed:
+Structured output uses Gemini's native ``response_schema``, which accepts a
+Pydantic model directly and returns a validated instance on ``response.parsed`` -
+so ``instructor`` is not needed here after all. Retry and trajectory logging stay
+with :func:`automa.llm.call_llm`; nothing in this file retries on its own, because
+an attempt that does not pass through ``call_llm`` never reaches the trajectory and
+invariant 3 would no longer hold.
 
-1. **Client and auth** - the `google-genai` package and its API-key resolution,
-   added to ``pyproject.toml`` and ``.env.example``.
-2. **Structured output** - Gemini's ``response_schema`` / ``response_mime_type``
-   equivalent of ``output_format``, returning something that validates against the
-   caller's Pydantic model. ``LLMResponse.parsed`` must stay a Pydantic instance so
-   callers cannot tell the providers apart.
-
-   The ``instructor`` library is the intended way to do this, and hand-mapping
-   ``response_schema`` is the fallback if it does not fit. It was deliberately not
-   added in Phase 0: on the Anthropic side ``client.messages.parse`` already covers
-   structured output natively, so instructor would have been a second abstraction
-   over a seam that already removes parsing from every caller.
-
-   **If you adopt it, disable its retries** (``max_retries=0``). Instructor has its
-   own validation-retry loop, and :func:`automa.llm.call_llm` already owns retrying
-   with the rejection fed back into the next prompt. Two nested loops would mean
-   instructor's internal attempts never reach the trajectory, which breaks invariant
-   3 - every prompt sent and every response received are logged - and agent
-   trajectories are a graded submission deliverable. Instructor's job here is schema
-   translation only; retry and logging stay with ``call_llm``.
-3. **Usage fields** - Gemini reports token counts under different names
-   (prompt/candidates/cached). Map them onto ``LLMResponse``'s fields, and do not
-   silently report zero for a count the API does not return.
-4. **Pricing entry** - register ``google:<model>`` in :mod:`automa.llm.pricing` with
-   ``free_tier=True`` so its $0 is labelled rather than ambiguous.
-5. **Retry policy** - free tiers rate-limit aggressively; ``is_retryable`` should
-   treat quota errors as retryable and the trajectory should show the wait.
-
-Two things to settle before switching the Tactician over:
-
-* Free-tier terms of service. Hackathon ground rule 3 requires every tool to be
-  used within its license and service terms, and ground rule 7 restricts what data
-  may be sent. Confirm game material may be sent to a free-tier endpoint.
-* Fairness disclosure. Running the Tactician on a free tier while the baseline runs
-  a paid model is a meaningful difference in resources between the two arms of the
-  comparison, and must be stated explicitly in the README and changelog.
+**Free-tier note.** Submitting content to the free tier is subject to Google's
+terms, which differ from paid usage. Automa only ever sends game state and rule
+material, and invariant 6 already forbids committing commercial rulebook text, so
+keep generated and hand-written game material original, public-domain or synthetic.
 """
 
 from __future__ import annotations
 
+import functools
+from typing import Any
+
+from google import genai
+from google.genai import errors, types
+
 from automa.llm.providers.base import LLMRequest, LLMResponse
+
+#: Effort levels mapped onto Gemini's thinking budget, so callers can express
+#: "think harder" without knowing which provider is behind the seam.
+_EFFORT_BUDGETS = {"low": 0, "medium": 2048, "high": 8192, "xhigh": 16384, "max": 24576}
+
+
+@functools.lru_cache(maxsize=1)
+def _client() -> genai.Client:
+    """One shared client. The SDK resolves GEMINI_API_KEY from the environment,
+    which :mod:`automa.config` has already loaded from .env and checked."""
+    return genai.Client()
+
+
+def _to_contents(messages: list[dict[str, Any]]) -> list[types.Content]:
+    """Translate the neutral message list into Gemini's Content list.
+
+    Gemini names the assistant role "model"; the retry loop in ``call_llm`` appends
+    an assistant turn followed by a user turn when a response is rejected, so this
+    mapping has to be right for corrective retries to work at all.
+    """
+    contents: list[types.Content] = []
+    for message in messages:
+        role = "model" if message.get("role") == "assistant" else "user"
+        text = message.get("content", "")
+        if not isinstance(text, str):
+            text = str(text)
+        contents.append(types.Content(role=role, parts=[types.Part(text=text)]))
+    return contents
+
+
+def _thinking_config(
+    thinking: dict[str, Any] | None, effort: str | None
+) -> types.ThinkingConfig | None:
+    if thinking is not None:
+        native = dict(thinking)
+        # Accept the neutral {"budget": N} spelling, and drop Anthropic-shaped keys
+        # so the same call site can target either provider.
+        if "budget" in native:
+            native["thinking_budget"] = native.pop("budget")
+        native.pop("type", None)
+        native.pop("display", None)
+        return types.ThinkingConfig(**native) if native else None
+    if effort is not None and effort in _EFFORT_BUDGETS:
+        return types.ThinkingConfig(thinking_budget=_EFFORT_BUDGETS[effort])
+    return None
 
 
 class GeminiProvider:
     name = "google"
 
     def complete(self, request: LLMRequest) -> LLMResponse:
-        raise NotImplementedError(
-            "The Gemini provider is a stub. See the module docstring in "
-            "llm/providers/gemini_provider.py for what it needs before use."
+        config = types.GenerateContentConfig(
+            system_instruction=request.system,
+            max_output_tokens=request.max_tokens,
+            thinking_config=_thinking_config(request.thinking, request.effort),
+            # Automatic function calling is on by default and would let the SDK make
+            # extra model calls on its own. Those calls would bypass call_llm and so
+            # never reach the trajectory, breaking invariant 3. Automa passes no
+            # tools, so switching AFC off costs nothing and removes the SDK's
+            # "direct use of AFC is not recommended" warning as a side effect.
+            automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
+        )
+        if request.output_format is not None:
+            config.response_mime_type = "application/json"
+            config.response_schema = request.output_format
+
+        response = _client().models.generate_content(
+            model=request.model,
+            contents=_to_contents(request.messages),
+            config=config,
+        )
+
+        candidate = (response.candidates or [None])[0]
+        finish_reason = getattr(candidate, "finish_reason", None)
+        stop_reason = getattr(finish_reason, "name", None) or (
+            str(finish_reason) if finish_reason else None
+        )
+
+        text = response.text or ""
+        if not text and stop_reason == "MAX_TOKENS":
+            # Thinking tokens are drawn from the same budget as the answer, so a
+            # tight max_tokens can be spent entirely on reasoning and return
+            # nothing. Say so plainly instead of handing back an empty string.
+            raise RuntimeError(
+                f"Gemini returned no text: the {request.max_tokens}-token output budget "
+                "was exhausted, most likely by thinking. Raise max_tokens, or pass "
+                'thinking={"budget": 0} to switch thinking off for this call.'
+            )
+
+        usage = response.usage_metadata
+        # Thinking tokens are billed as output, so fold them in rather than
+        # under-reporting what the turn actually cost.
+        output_tokens = (getattr(usage, "candidates_token_count", 0) or 0) + (
+            getattr(usage, "thoughts_token_count", 0) or 0
+        )
+
+        raw_content: list[dict[str, Any]] = []
+        for cand in response.candidates or []:
+            if cand.content and cand.content.parts:
+                raw_content.extend(
+                    part.model_dump(exclude_none=True) for part in cand.content.parts
+                )
+
+        return LLMResponse(
+            text=text,
+            parsed=response.parsed if request.output_format is not None else None,
+            stop_reason=stop_reason,
+            input_tokens=getattr(usage, "prompt_token_count", 0) or 0,
+            output_tokens=output_tokens,
+            cache_read_tokens=getattr(usage, "cached_content_token_count", 0) or 0,
+            cache_write_tokens=0,  # Gemini reports no separate cache-write count
+            request_id=response.response_id,
+            raw_content=raw_content,
         )
 
     def is_retryable(self, exc: BaseException) -> bool:
+        if isinstance(exc, errors.ServerError):
+            return True
+        if isinstance(exc, errors.ClientError):
+            # 429 matters here: the free tier rate-limits aggressively, and the
+            # retry is logged so the trajectory shows the wait rather than hiding it.
+            return getattr(exc, "code", None) == 429
         return False
