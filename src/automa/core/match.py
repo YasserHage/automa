@@ -82,6 +82,14 @@ class Decision:
     index: int
     justification: str | None = None
     fallback: bool = False
+    intervention: bool = False
+    """The decider proposed something illegal and the core substituted a legal action.
+
+    Kept distinct from ``fallback`` on purpose. A fallback means the model could not
+    be reached; an intervention means it *was* reached and got the rules wrong. Only
+    the second is a corrective intervention in the sense the primary metric counts,
+    and folding them together would let a provider outage read as a rules failure.
+    """
 
 
 Decider = Callable[[TurnContext], "int | Decision"]
@@ -110,6 +118,9 @@ class MatchResult:
     turns: int = 0
     plies: int = 0
     fallbacks: dict[Player, int] = field(default_factory=dict)
+    interventions: dict[Player, int] = field(default_factory=dict)
+    first_intervention_turn: int | None = None
+    """Turns survived before a human would have had to step in - the primary metric."""
     invariant_violations: list[str] = field(default_factory=list)
 
     def summary(self) -> str:
@@ -119,9 +130,12 @@ class MatchResult:
             head = f"Draw after {self.turns} turn(s)"
         else:
             head = f"{self.winner} wins after {self.turns} turn(s)"
+        notes = []
         if any(self.fallbacks.values()):
-            return f"{head} ({sum(self.fallbacks.values())} fallback action(s))"
-        return head
+            notes.append(f"{sum(self.fallbacks.values())} fallback action(s)")
+        if any(self.interventions.values()):
+            notes.append(f"{sum(self.interventions.values())} intervention(s)")
+        return f"{head} ({', '.join(notes)})" if notes else head
 
 
 def viewer_for(player: Player) -> Viewer:
@@ -185,6 +199,7 @@ def play_match(
         seed=seed,
         outcome="terminal",
         fallbacks={p: 0 for p in game.PLAYERS},
+        interventions={p: 0 for p in game.PLAYERS},
     )
     _emit(
         trajectory,
@@ -244,6 +259,10 @@ def play_match(
                 )
             if decision.fallback:
                 result.fallbacks[player] += 1
+            if decision.intervention:
+                result.interventions[player] += 1
+                if result.first_intervention_turn is None:
+                    result.first_intervention_turn = ctx.turn
 
             action = actions[decision.index]
             state = game.apply(state, action)
@@ -257,6 +276,7 @@ def play_match(
                 action=action[LABEL],
                 justification=decision.justification,
                 fallback=decision.fallback,
+                intervention=decision.intervention,
             )
             if observer is not None:
                 observer(ctx, decision, action)
@@ -282,6 +302,8 @@ def play_match(
         turns=result.turns,
         plies=result.plies,
         fallbacks=result.fallbacks,
+        interventions=result.interventions,
+        first_intervention_turn=result.first_intervention_turn,
     )
     return result
 

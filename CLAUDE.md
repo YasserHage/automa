@@ -4,14 +4,22 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project state
 
-**Phase 2 is complete.** The exit criterion is met: complete matches on both games with
-every Tactician decision and justification logged. Results, measurements and open items
-are in `docs/phase2_results.md`; per-match metrics in `docs/validation/phase2_metrics.json`.
-Phase 3 (baseline and evaluation harness) is next, and `plan.md` says it must never be cut.
+**Phase 4 is complete.** The rule compiler works: a model reads the scanned rulebook and
+a submitted card list and produces a game module that passes a static scan, a subprocess
+sandbox, 200 matches of self-play and the same contract tests the hand-written games face.
+A Tactician has played a full match on the compiled module. Results in
+`docs/phase4_results.md`; earlier phases in `docs/phase3_results.md` and
+`docs/phase2_results.md`. Phase 5 (effect vocabulary and incremental card ingestion) is
+next, and needs a third game with **effect cards and a draw deck** - that game is what
+makes invariant 5 and the per-turn information loop real.
 
-One caveat carried forward: both live matches ran with `--auto`, so no person has yet
-typed a move into a live match. The interactive path is implemented and tested, but the
-live demonstration is still owed and Phase 8's video needs it.
+**The lesson worth carrying:** the compiler's first module passed 200 matches of self-play
+with zero violations while crashing the moment anyone rendered the board. `describe_state`
+was the one contract method the Phase 1 harness never called, and three phases of
+hand-written games never exposed it. Generated code is a better test of a validator than
+hand-written code, because it does not share the author's assumptions. Two defects in the
+compiled module still pass every gate: it ignores the `viewer` argument (so a human cannot
+see their own hand), and it sets `NAME = "dnup"`, colliding with the hand-written module.
 
 Before writing any code, re-read `plan.md` in full; it is the authoritative spec for
 architecture, phase scope, and exit criteria. Do not paraphrase or summarize it away — refer

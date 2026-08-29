@@ -175,3 +175,68 @@ def test_an_aborted_match_fails_validation_even_with_no_violations() -> None:
     assert not report.violations
     assert not report.ok
     assert report.outcomes == {"aborted": 2}
+
+
+def test_a_module_that_cannot_render_its_state_is_caught() -> None:
+    """Regression from Phase 4, and the reason this check exists.
+
+    The harness exercised five of the six contract methods and skipped
+    `describe_state`. A compiled DNUP module that raised `AttributeError` the moment
+    anyone looked at the board therefore passed 200 matches of self-play with zero
+    violations - while being completely unusable, since rendering the board is what
+    the entire human interface does.
+    """
+    def explodes(state, viewer):
+        raise AttributeError("Viewer has no attribute 'human'")
+
+    assert "describe_state_renders_for_every_viewer" in checks(countdown(describe_state=explodes))
+
+
+def test_a_module_returning_empty_text_is_caught() -> None:
+    """Not raising is not the same as working."""
+    module = countdown(describe_state=lambda s, v: "   ")
+    assert "describe_state_renders_for_every_viewer" in checks(module)
+
+
+def test_a_view_that_breaks_only_later_in_a_match_is_still_caught() -> None:
+    """Rendering is re-checked periodically, not just at the opening position - a
+    board that only breaks once it fills up is the more likely failure."""
+    def breaks_later(state, viewer):
+        if state["n"] < 50:  # fine at the opening, broken from ply 11 onwards
+            raise RuntimeError("only fails once the board has filled")
+        return "fine"
+
+    module = countdown(
+        initial_state=lambda seed=None: {TO_PLAY: "a", TURN: 0, PLY: 0, "n": 60},
+        describe_state=breaks_later,
+    )
+    assert "describe_state_renders_for_every_viewer" in checks(module, max_plies=80)
+
+
+def test_rendering_is_sampled_not_checked_every_ply() -> None:
+    """The interval is a real trade, so it is stated rather than assumed.
+
+    Checking every ply would triple validation cost to re-render a board that changes
+    little; checking only the opening position is what missed the Phase 4 bug. Periodic
+    sampling catches breakage that appears as the board fills, but a fault confined to
+    the handful of plies between samples can still slip through - which is why
+    `tests/test_views.py` exercises rendering directly as well.
+    """
+    from automa.core.selfplay import VIEW_CHECK_EVERY
+
+    assert 1 < VIEW_CHECK_EVERY <= 50
+
+    rendered: list[int] = []
+
+    def counting(state, viewer):
+        rendered.append(state["ply"])
+        return "fine"
+
+    module = countdown(
+        initial_state=lambda seed=None: {TO_PLAY: "a", TURN: 0, PLY: 0, "n": 60},
+        describe_state=counting,
+    )
+    random_playout(module, seed=0, max_plies=80)
+    sampled = sorted(set(rendered))
+    assert sampled[0] == 0, "the opening position is always rendered"
+    assert len(sampled) > 1, "and it is re-checked as the match goes on"

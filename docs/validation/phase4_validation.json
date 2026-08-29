@@ -1,0 +1,59 @@
+{
+  "matches_per_game": 200,
+  "seed0": 0,
+  "max_plies": 1000,
+  "ok": true,
+  "games": [
+    {
+      "game": "dnup",
+      "matches": 200,
+      "max_plies": 1000,
+      "outcomes": {
+        "terminal": 200
+      },
+      "winners": {
+        "automa": 93,
+        "human": 107
+      },
+      "ply_min": 58,
+      "ply_median": 145.5,
+      "ply_max": 316,
+      "violations": [],
+      "ok": true
+    },
+    {
+      "game": "dnup",
+      "matches": 200,
+      "max_plies": 1000,
+      "outcomes": {
+        "terminal": 200
+      },
+      "winners": {
+        "automa": 99,
+        "human": 101
+      },
+      "ply_min": 61,
+      "ply_median": 149.5,
+      "ply_max": 270,
+      "violations": [],
+      "ok": true
+    },
+    {
+      "game": "nim",
+      "matches": 200,
+      "max_plies": 1000,
+      "outcomes": {
+        "terminal": 200
+      },
+      "winners": {
+        "human": 101,
+        "automa": 99
+      },
+      "ply_min": 3,
+      "ply_median": 6.0,
+      "ply_max": 11,
+      "violations": [],
+      "ok": true
+    }
+  ]
+}

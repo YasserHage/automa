@@ -39,6 +39,33 @@ def _client() -> genai.Client:
     return genai.Client()
 
 
+def _to_parts(content: Any) -> list[types.Part]:
+    """One message's content as Gemini Parts.
+
+    A plain string is the ordinary case. The list form carries images - a scanned
+    rulebook page, a card photograph - which is how rule material reaches a model
+    without bypassing ``call_llm``.
+    """
+    if isinstance(content, str):
+        return [types.Part(text=content)]
+    if not isinstance(content, list):
+        return [types.Part(text=str(content))]
+
+    parts: list[types.Part] = []
+    for part in content:
+        if not isinstance(part, dict):
+            parts.append(types.Part(text=str(part)))
+        elif part.get("type") == "image":
+            parts.append(
+                types.Part.from_bytes(
+                    data=part["data"], mime_type=part.get("mime_type", "image/jpeg")
+                )
+            )
+        else:
+            parts.append(types.Part(text=part.get("text", "")))
+    return parts
+
+
 def _to_contents(messages: list[dict[str, Any]]) -> list[types.Content]:
     """Translate the neutral message list into Gemini's Content list.
 
@@ -46,14 +73,13 @@ def _to_contents(messages: list[dict[str, Any]]) -> list[types.Content]:
     an assistant turn followed by a user turn when a response is rejected, so this
     mapping has to be right for corrective retries to work at all.
     """
-    contents: list[types.Content] = []
-    for message in messages:
-        role = "model" if message.get("role") == "assistant" else "user"
-        text = message.get("content", "")
-        if not isinstance(text, str):
-            text = str(text)
-        contents.append(types.Content(role=role, parts=[types.Part(text=text)]))
-    return contents
+    return [
+        types.Content(
+            role="model" if m.get("role") == "assistant" else "user",
+            parts=_to_parts(m.get("content", "")),
+        )
+        for m in messages
+    ]
 
 
 def _thinking_config(

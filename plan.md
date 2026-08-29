@@ -135,8 +135,9 @@ at least one removed experiment.
 
 | Version | What changed and why | Evidence | Decision / Learning |
 |---|---|---|---|
-| Baseline | LLM with rules prompt + state, no agent architecture | *fill after eval* | Starting point |
-| V1 | Deterministic core + compiled module + tactician with enumeration + strategist | *fill after eval* | *fill after eval* |
+| Baseline | LLM with rules prompt + state, no agent architecture | DNUP: 20.7 illegal moves/match, 0/3 clean, first correction at turn 0.3, 0/3 wins. Nim: 0 illegal, 10/10 clean, 5/10 wins. Battery 15/16 legal, 3/6 optimal. `docs/validation/phase3_baseline.json` | Starting point - and not a strawman. It plays Nim flawlessly; it collapses on DNUP. The architecture's value scales with game complexity, and testing only on Nim would have shown it buying nothing. |
+| V1 | Deterministic core + hand-written module + tactician with enumeration (no strategist yet) | DNUP: 0 interventions across 513 turns, 3/3 clean, 2/3 wins. Nim: 0 interventions, 6/10 wins. Battery 16/16 legal, **1/6 optimal**. `docs/validation/phase3_agent.json` | Kept, but the two halves read differently. Illegal moves went 62 -> 0, and that was fixed before the run: the tactician is handed a list already filtered to legal moves and replies with a number, so it cannot output an illegal one. That shows it was never able to break the rules, not that it understood them. The real finding is that decision quality *fell* (3/6 -> 1/6 optimal, n=6): enumeration removes illegal moves and may also remove the pressure to reason about the board. This is the number Phase 6's Strategist has to beat. |
+| V2 | Rule compiler: module generated from the scanned rulebook + card list, gated by static scan, subprocess sandbox, 200-match self-play and human approval | Compiled in 1 attempt, $0.35. Passes conforms + 200/200 self-play + the parametrised contract and view tests. Tactician played it: 79 turns, 40 calls, 0 fallbacks. `docs/phase4_results.md` | Kept. Independently reached the same rules and flagged two real edge cases as assumptions. The key finding was a hole in *my* validator: its first module passed 200 self-play matches while crashing on `describe_state`, the one contract method the Phase 1 harness never called. Generated code tested the validator better than hand-written code did. |
 
 ---
 

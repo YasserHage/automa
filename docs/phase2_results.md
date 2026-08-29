@@ -154,7 +154,19 @@ than passed off as a measurement. Now `$0.30/$2.50` and `$0.75/$3.75`, `list_pri
 arms × ~46 calls, flash-lite costs ~$0.33 and flash-3.6 ~$3.60. Both are negligible.
 Decision quality and latency should decide the model, not price.
 
-**4. A portability bug that would have hit a judge.** `automa-show` used box-drawing
+**4. An experiment tried and dropped: gemini-3.6-flash.**
+Ten identical DNUP decisions were put to both models, interleaved with alternating
+order so a busy minute could not land on one of them. flash-3.6 was faster in total
+(72.7s against flash-lite's 153.4s) because flash-lite is bimodal - a 1.2s median with
+a heavy tail out to 64s. It was dropped anyway on cost: it emits a median of **736
+output tokens per decision against flash-lite's 39**, because it reasons at length and
+reasoning is billed as output. On the 46-call DNUP match that is $0.15 against $0.014,
+about 11x, rising to ~22x when its promotional pricing ends on 2027-01-01. Kept
+flash-lite. What it taught: comparing published per-token prices (2.17x) would have
+given the wrong answer by a factor of five - the token *volume* a model spends on the
+same question matters more than its rate, and only measuring real calls reveals it.
+
+**5. A portability bug that would have hit a judge.** `automa-show` used box-drawing
 characters and crashed with `UnicodeEncodeError` on a cp1252 Windows console. All
 source is ASCII-only now.
 

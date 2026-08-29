@@ -25,7 +25,7 @@ from dataclasses import asdict, dataclass, field
 from types import ModuleType
 from typing import Any
 
-from automa.core.game import CORE_KEYS, LABEL, PENDING, PLY, TO_PLAY, TURN
+from automa.core.game import CORE_KEYS, LABEL, PENDING, PLY, TO_PLAY, TURN, Viewer
 
 #: Generous by design. A game whose rules impose no bound on match length - DNUP is
 #: one - terminates almost surely under random play but has no proven ceiling, so
@@ -164,6 +164,42 @@ def _check_state(module: ModuleType, state: Any, record: Any, ply: int) -> None:
             record("check_invariants", problem, ply)
 
 
+def _check_views(module: ModuleType, state: Any, record: Any, ply: int) -> None:
+    """Every viewer must get readable text, from every reachable state.
+
+    This exists because Phase 4 found the gap the hard way. The harness exercised five
+    of the six contract methods and left out `describe_state` - so a compiled module
+    that raised `AttributeError` the moment anyone looked at the board passed 200
+    matches of self-play with zero violations. `describe_state` is the method the whole
+    human interface rests on, and it was the only one nothing checked.
+
+    Not a privacy check: what is secret is game-specific and the core cannot know it.
+    `tests/test_views.py` owns that. This only asserts the method works at all.
+    """
+    for viewer in Viewer:
+        try:
+            text = module.describe_state(state, viewer)
+        except Exception as exc:
+            record(
+                "describe_state_renders_for_every_viewer",
+                f"{viewer.value}: {type(exc).__name__}: {exc}",
+                ply,
+            )
+            continue
+        if not isinstance(text, str) or not text.strip():
+            record(
+                "describe_state_renders_for_every_viewer",
+                f"{viewer.value}: returned {type(text).__name__}, expected non-empty text",
+                ply,
+            )
+
+
+#: How often to render the state during a playout. Every ply would triple the cost of
+#: validation to re-check something that rarely varies; never would have missed the bug
+#: that put this here. Periodic catches breakage that only appears once the board fills.
+VIEW_CHECK_EVERY = 25
+
+
 def random_playout(
     module: ModuleType,
     seed: int,
@@ -184,6 +220,7 @@ def random_playout(
     try:
         state = module.initial_state(seed)
         _check_state(module, state, record, ply)
+        _check_views(module, state, record, ply)
 
         while ply < max_plies:
             if module.is_terminal(state):
@@ -243,6 +280,8 @@ def random_playout(
 
             state = new_state
             ply += 1
+            if ply % VIEW_CHECK_EVERY == 0:
+                _check_views(module, state, record, ply)
         else:
             outcome = "aborted"
 

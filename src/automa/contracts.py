@@ -111,3 +111,34 @@ class CompilerOutput(BaseModel):
         default_factory=list,
         description="Points the Compiler could not resolve and wants a human to settle.",
     )
+
+
+class BaselineMove(BaseModel):
+    """One move from the Phase 3 baseline, which plays without enumeration.
+
+    The baseline never receives a list of legal actions - that is the whole
+    difference under test - so it cannot answer with an index. It answers with the
+    action itself, as a JSON object in the game's own action shape, and the harness
+    decides afterwards whether that action was legal.
+
+    ``action_json`` is a *string* rather than a nested model for two reasons. Action
+    shapes are game-specific, so no single schema covers them; and a plain string is
+    the one field type every provider handles identically, which matters because the
+    baseline must never lose on formatting. Malformed JSON is retried through
+    :func:`automa.llm.call_llm`'s feedback loop; an illegal *move* is never retried,
+    because being told a move is illegal is precisely the corrective intervention the
+    primary metric counts.
+    """
+
+    action_json: str = Field(
+        min_length=1,
+        description=(
+            "The chosen action as a JSON object, using the exact keys shown in the "
+            "rules brief. Example: {\"kind\": \"take\", \"area\": 0}"
+        ),
+    )
+    justification: str = Field(
+        min_length=1,
+        max_length=300,
+        description="One line explaining the choice, in terms a player would understand.",
+    )

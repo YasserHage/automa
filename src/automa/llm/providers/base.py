@@ -22,6 +22,17 @@ class LLMRequest:
     """Bare model name, provider prefix already stripped."""
 
     messages: list[dict[str, Any]]
+    """``{"role": ..., "content": ...}`` where content is either a plain string or a
+    list of parts, each ``{"type": "text", "text": ...}`` or
+    ``{"type": "image", "mime_type": ..., "data": <bytes>}``.
+
+    The list form exists so rule material - a scanned rulebook, card photographs -
+    reaches a model *through* :func:`automa.llm.call.call_llm` rather than around it,
+    which is what keeps invariant 3 true for the Compiler. Image bytes are replaced by
+    a descriptor before the prompt is written to the trajectory: logging a few hundred
+    kilobytes of base64 per call would drown the log it is meant to make auditable.
+    """
+
     system: str | None = None
     max_tokens: int = 4096
     output_format: type[BaseModel] | None = None

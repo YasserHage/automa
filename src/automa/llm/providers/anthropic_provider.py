@@ -21,6 +21,21 @@ class AnthropicProvider:
     name = "anthropic"
 
     def complete(self, request: LLMRequest) -> LLMResponse:
+        # Anthropic's image blocks use a different shape from the neutral one
+        # (source/base64 rather than mime_type/bytes). Rather than translate a path
+        # nothing exercises yet, refuse it plainly: a silent drop would send the
+        # Compiler a prompt with the rulebook missing and no indication why.
+        for message in request.messages:
+            content = message.get("content")
+            if isinstance(content, list) and any(
+                isinstance(p, dict) and p.get("type") == "image" for p in content
+            ):
+                raise NotImplementedError(
+                    "The Anthropic backend does not yet translate image parts. "
+                    "Use a google: model for image input, or add the translation "
+                    "to anthropic_provider.complete()."
+                )
+
         kwargs: dict[str, Any] = {
             "model": request.model,
             "max_tokens": request.max_tokens,

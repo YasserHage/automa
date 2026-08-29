@@ -8,6 +8,7 @@ call through here; nothing else constructs a provider request.
 
 from __future__ import annotations
 
+import hashlib
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -218,6 +219,41 @@ def call_llm(
     )
 
 
+def _loggable(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Messages with image bytes replaced by a descriptor.
+
+    Invariant 3 asks for the full prompt on the record. Taken literally for an image
+    that means a few hundred kilobytes of base64 per call, which would bury the text
+    the log exists to make readable. A digest identifies the image exactly - the same
+    file always produces the same entry, and a different one is immediately visible -
+    without the payload.
+    """
+    out: list[dict[str, Any]] = []
+    for message in messages:
+        content = message.get("content")
+        if not isinstance(content, list):
+            out.append(message)
+            continue
+        parts: list[Any] = []
+        for part in content:
+            if isinstance(part, dict) and part.get("type") == "image":
+                data = part.get("data") or b""
+                parts.append(
+                    {
+                        "type": "image",
+                        "mime_type": part.get("mime_type"),
+                        "bytes": len(data),
+                        "sha256": hashlib.sha256(data).hexdigest()[:16],
+                    }
+                )
+            else:
+                parts.append(part)
+        out.append({**message, "content": parts})
+    return out
+
+
 def _emit(trajectory: TrajectoryWriter | None, **fields: Any) -> None:
     if trajectory is not None:
+        if "messages" in fields:
+            fields["messages"] = _loggable(fields["messages"])
         trajectory.emit("llm_call", **fields)

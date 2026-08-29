@@ -46,6 +46,15 @@ PRICES: dict[str, Price] = {
     # 2027-01-01, which would take this model from ~2.2x flash-lite to ~4.3x on
     # Automa's input-heavy token mix. Revisit before quoting costs after that date.
     "google:gemini-3.6-flash": Price(0.75, 3.75),
+    # The Compiler's model. Roughly 7x flash-lite on input and 5x on output, which is
+    # affordable only because compilation happens once per game rather than once per
+    # turn - a Tactician on this would be indefensible.
+    #
+    # NOTE: Google tiers this by prompt size - above 200k tokens it becomes $4.00/$18.00.
+    # Automa's compile prompts are two page images plus a few thousand characters, far
+    # under that, so the standard rate is the right one. If rule material ever grows
+    # past 200k tokens this entry silently under-reports and must be revisited.
+    "google:gemini-3.1-pro-preview": Price(2.00, 12.00),
 }
 
 # Cache pricing is a multiple of the input rate.

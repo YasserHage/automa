@@ -186,6 +186,26 @@ def _arity_problem(name: str, fn: Any, wanted: int) -> str | None:
     return None
 
 
+def action_shape(action: Action) -> tuple[tuple[str, str], ...]:
+    """An action's key/type signature, ignoring :data:`LABEL`.
+
+    Two consumers need to agree on what "the same kind of action" means and must not
+    drift apart: the Phase 3 baseline uses it to tell a *malformed* answer (retry, a
+    formatting problem) from an *illegal* one (an intervention, a rules problem), and
+    the Phase 4 compiler uses it to check a generated module offers the same action
+    vocabulary as the hand-written one. Defined once, here, beside the action type.
+    """
+    def type_name(value: Any) -> str:
+        if isinstance(value, bool):
+            return "bool"
+        if isinstance(value, list):
+            inner = {type_name(v) for v in value} or {"any"}
+            return f"list[{'|'.join(sorted(inner))}]"
+        return {int: "int", str: "str", float: "float"}.get(type(value), type(value).__name__)
+
+    return tuple(sorted((k, type_name(v)) for k, v in action.items() if k != LABEL))
+
+
 def conforms(module: ModuleType) -> list[str]:
     """Reasons ``module`` fails the contract. Empty means it conforms.
 

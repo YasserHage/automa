@@ -25,6 +25,8 @@ dev = [
 [project.scripts]
 automa-hello = "automa.scripts.hello_llm:main"
 automa-show = "automa.trajectory.show:main"
+automa-compile = "automa.scripts.compile_game:main"
+automa-eval = "automa.eval.run:main"
 automa-play = "automa.scripts.play:main"
 automa-validate = "automa.scripts.validate_games:main"
 
@@ -38,6 +40,11 @@ addopts = "-q"
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+# Compiler output is held to the *contract* - the interface, self-play soundness, the
+# sandbox - not to this project's house style. Failing the build over a model's import
+# ordering would say nothing about whether the module plays the game correctly. Its real
+# defects are caught by tests, which do run against it.
+extend-exclude = ["src/automa/games/*_compiled.py"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
