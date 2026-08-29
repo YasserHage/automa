@@ -32,8 +32,10 @@ py -3.12 -m venv .venv
 copy .env.example .env      # then add your GEMINI_API_KEY
 ```
 
-Every role runs on `google:gemini-3.6-flash` by default, so a Gemini API key is all you
-need. The Anthropic backend is fully implemented too — point any role at it with
+Every role runs on `google:gemini-3.5-flash-lite` by default, so a Gemini API key is all
+you need. Change the model without touching code by setting `AUTOMA_MODEL` in `.env`, or
+`AUTOMA_MODEL_<ROLE>` to move one agent on its own. The Anthropic backend is fully
+implemented too — point a role at it with
 `AUTOMA_MODEL_<ROLE>=anthropic:claude-opus-5` and set `ANTHROPIC_API_KEY`.
 
 ## Commands

@@ -16,14 +16,14 @@ import sys
 from pathlib import Path
 from typing import Any
 
-RULE = "─" * 78
+RULE = "-" * 78
 
 
 def _clip(text: str, limit: int | None) -> str:
     text = text.rstrip()
     if limit is None or len(text) <= limit:
         return text
-    return f"{text[:limit]}… [{len(text) - limit} more chars, use --full]"
+    return f"{text[:limit]}... [{len(text) - limit} more chars, use --full]"
 
 def _indent(text: str, prefix: str = "    ") -> str:
     return "\n".join(prefix + line for line in text.splitlines())
@@ -37,6 +37,70 @@ def _render_messages(messages: list[dict[str, Any]], limit: int | None) -> str:
             content = json.dumps(content, ensure_ascii=False)
         out.append(f"  [{msg.get('role')}]\n{_indent(_clip(content, limit), '    ')}")
     return "\n".join(out)
+
+
+def _render_core_event(head: str, e: dict[str, Any], limit: int | None) -> list[str]:
+    """Render a match event.
+
+    These carry the architectural claim: `legal_actions_enumerated` shows the options
+    existed before anyone was asked, and `action_applied` shows which one was taken and
+    why. A reader following a trajectory should be able to check invariant 1 by eye.
+    """
+    event = e.get("event")
+    out: list[str] = []
+
+    if event == "match_start":
+        out.append("")
+        out.append(RULE)
+        out.append(
+            f"{head}  MATCH START  game={e.get('game')} seed={e.get('seed')} "
+            f"players={e.get('players')}"
+        )
+        out.append(RULE)
+
+    elif event == "legal_actions_enumerated":
+        actions = e.get("actions") or []
+        out.append("")
+        out.append(
+            f"{head}  ply={e.get('ply')} turn={e.get('turn')} to_play={e.get('to_play')} "
+            f"- {len(actions)} legal action(s) enumerated by the core"
+        )
+        shown = actions if limit is None else actions[:8]
+        out += [f"    {i}. {a}" for i, a in enumerate(shown)]
+        if len(shown) < len(actions):
+            out.append(f"    ... {len(actions) - len(shown)} more, use --full")
+
+    elif event == "action_applied":
+        marker = " [FALLBACK]" if e.get("fallback") else ""
+        out.append(
+            f"{head}  {e.get('player')} -> [{e.get('index')}] {e.get('action')}{marker}"
+        )
+        if e.get("justification"):
+            out.append(f"    because: {_clip(e['justification'], limit)}")
+
+    elif event == "tactician_fallback":
+        detail = _clip(str(e.get("error")), limit)
+        out.append(f"{head}  !! FALLBACK at ply {e.get('ply')}: {detail}")
+        if e.get("note"):
+            out.append(f"    {e['note']}")
+
+    elif event == "invariant_violation":
+        out.append(f"{head}  !! INVARIANT at ply {e.get('ply')}: {e.get('problem')}")
+
+    elif event == "match_end":
+        out.append("")
+        out.append(
+            f"{head}  MATCH END  outcome={e.get('outcome')} winner={e.get('winner')} "
+            f"turns={e.get('turns')} plies={e.get('plies')}"
+        )
+        if any((e.get("fallbacks") or {}).values()):
+            out.append(f"      fallbacks={e['fallbacks']}")
+
+    else:
+        payload = {k: v for k, v in e.items() if k not in {"seq", "ts", "type"}}
+        out.append(f"{head}  {json.dumps(payload, ensure_ascii=False)[:400]}")
+
+    return out
 
 
 def render(path: Path, limit: int | None) -> str:
@@ -91,6 +155,21 @@ def render(path: Path, limit: int | None) -> str:
                     f"cost={cost_str} ({e.get('pricing_note')}) "
                     f"latency={e.get('latency_ms')}ms stop={e.get('stop_reason')}"
                 )
+
+        elif etype == "core_event":
+            lines.extend(_render_core_event(head, e, limit))
+
+        elif etype == "human_checkpoint":
+            lines.append("")
+            lines.append(
+                f"{head}  ply={e.get('ply')} turn={e.get('turn')} "
+                f"-> [{e.get('chosen_index')}] {e.get('chosen')}"
+            )
+            if e.get("options"):
+                lines.append(f"  [offered] {len(e['options'])} legal action(s)")
+            if e.get("shown"):
+                lines.append("  [shown to the human]")
+                lines.append(_indent(_clip(e["shown"], limit)))
 
         elif etype == "run_end":
             total = e.get("total_cost_usd")

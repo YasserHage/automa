@@ -114,10 +114,24 @@ def call_llm(
             )
             if trajectory is not None:
                 trajectory.record_failed_attempt()
-            if attempt < max_attempts and provider.is_retryable(exc):
-                last_rejection = f"{type(exc).__name__}: {exc}"
+            if not provider.is_retryable(exc):
+                # A bad model name, a missing entitlement, a rejected key. Retrying
+                # cannot help and degrading to a fallback would hide a
+                # misconfiguration behind ninety turns of random play, so this one
+                # propagates unchanged and loudly.
+                raise
+            last_rejection = f"{type(exc).__name__}: {exc}"
+            if attempt < max_attempts:
                 continue
-            raise
+            # Out of attempts on a *transient* failure. Honour the documented
+            # contract - callers are told to expect LLMCallError - so that a
+            # provider outage reaches the one handler written for it. Raising the
+            # raw vendor exception here instead is what let a run of 503s kill a
+            # match whose Tactician had a working fallback ready.
+            raise LLMCallError(
+                f"{agent}: no response from {model_id} after {max_attempts} attempts. "
+                f"Last failure: {last_rejection}"
+            ) from exc
 
         latency_ms = round((time.monotonic() - started) * 1000, 1)
         cost = cost_usd(

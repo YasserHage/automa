@@ -4,6 +4,9 @@ Deliberately no mocked SDK here: the tests drive a hand-written provider through
 the same seam a real backend uses. If the seam were fake, these tests could not be
 written this way - so they double as proof that a second provider can be dropped in
 without touching `call_llm` or its callers.
+
+`ScriptedProvider` and the `install_provider` fixture live in `_providers.py` and
+`conftest.py`, so the Tactician tests drive the identical seam.
 """
 
 from __future__ import annotations
@@ -12,61 +15,12 @@ import json
 from pathlib import Path
 
 import pytest
-from pydantic import BaseModel
+from _providers import Decision, ScriptedProvider, decision_response
 
-import automa.llm.call as call_module
 from automa.llm.call import LLMCallError, call_llm
-from automa.llm.providers.base import LLMRequest, LLMResponse
 from automa.trajectory import TrajectoryWriter
 
 MODEL = "anthropic:claude-haiku-4-5"
-
-
-class Decision(BaseModel):
-    action_index: int
-    justification: str
-
-
-class ScriptedProvider:
-    """Returns a canned response per attempt and records what it was sent."""
-
-    name = "scripted"
-
-    def __init__(self, *responses: LLMResponse | Exception) -> None:
-        self._responses = list(responses)
-        self.requests: list[LLMRequest] = []
-
-    def complete(self, request: LLMRequest) -> LLMResponse:
-        self.requests.append(request)
-        item = self._responses[len(self.requests) - 1]
-        if isinstance(item, Exception):
-            raise item
-        return item
-
-    def is_retryable(self, exc: BaseException) -> bool:
-        return isinstance(exc, TimeoutError)
-
-
-def decision_response(index: int) -> LLMResponse:
-    parsed = Decision(action_index=index, justification=f"picked {index}")
-    return LLMResponse(
-        text=parsed.model_dump_json(),
-        parsed=parsed,
-        stop_reason="end_turn",
-        input_tokens=120,
-        output_tokens=20,
-        request_id=f"req_{index}",
-        raw_content=[{"type": "text", "text": parsed.model_dump_json()}],
-    )
-
-
-@pytest.fixture
-def install_provider(monkeypatch):
-    def _install(provider):
-        monkeypatch.setattr(call_module, "resolve", lambda _name: provider)
-        return provider
-
-    return _install
 
 
 def read_events(path: Path) -> list[dict]:
@@ -195,6 +149,40 @@ def test_retryable_transport_error_is_logged_then_retried(install_provider, tmp_
 
 def test_non_retryable_error_propagates(install_provider) -> None:
     install_provider(ScriptedProvider(PermissionError("bad key")))
+
+    with pytest.raises(PermissionError):
+        call_llm(
+            agent="tactician",
+            model=MODEL,
+            messages=[{"role": "user", "content": "Choose."}],
+        )
+
+
+def test_exhausting_attempts_on_a_transient_error_raises_llmcallerror(install_provider) -> None:
+    """The documented contract, and the one the Tactician's fallback depends on.
+
+    Raising the raw vendor exception here instead is what let a run of 503s kill a
+    DNUP match whose Tactician had a working fallback ready: it caught LLMCallError,
+    and a ServerError sailed straight past it.
+    """
+    install_provider(ScriptedProvider(*[TimeoutError("503 unavailable")] * 3))
+
+    with pytest.raises(LLMCallError, match="503 unavailable"):
+        call_llm(
+            agent="tactician",
+            model=MODEL,
+            messages=[{"role": "user", "content": "Choose."}],
+            max_attempts=3,
+        )
+
+
+def test_a_non_retryable_error_still_propagates_unchanged(install_provider) -> None:
+    """A bad model name must not be softened into a retryable-looking failure.
+
+    Degrading a misconfiguration to a fallback would hide it behind a whole match of
+    random play, so this one stays loud.
+    """
+    install_provider(ScriptedProvider(PermissionError("404 model not found")))
 
     with pytest.raises(PermissionError):
         call_llm(

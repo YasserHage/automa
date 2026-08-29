@@ -1,0 +1,91 @@
+{
+  "matches": [
+    {
+      "file": "20260829-143912-nim-8fe09904191e.jsonl",
+      "game": "nim",
+      "seed": 1,
+      "model": "google:gemini-3.6-flash",
+      "outcome": "terminal",
+      "winner": "automa",
+      "turns": 6,
+      "plies": 6,
+      "automa_moves": 3,
+      "justified_moves": 3,
+      "fallbacks": {
+        "automa": 0,
+        "human": 0
+      },
+      "human_typed_moves": 0,
+      "llm_calls_ok": 3,
+      "llm_attempts_failed": 2,
+      "input_tokens": 797,
+      "output_tokens": 738,
+      "output_tokens_median": 265,
+      "cost_usd_as_logged": 0,
+      "cost_usd_recomputed": 0.003365,
+      "cost_usd_per_turn": 0.001122,
+      "pricing_note": "list_price",
+      "latency_s_p50": 8.2,
+      "latency_s_mean": 19.4,
+      "latency_s_max": 43.4
+    },
+    {
+      "file": "20260829-151556-dnup-0e52e61453e7.jsonl",
+      "game": "dnup",
+      "seed": 1,
+      "model": "google:gemini-3.5-flash-lite",
+      "outcome": "terminal",
+      "winner": "automa",
+      "turns": 91,
+      "plies": 91,
+      "automa_moves": 46,
+      "justified_moves": 46,
+      "fallbacks": {
+        "automa": 0,
+        "human": 0
+      },
+      "human_typed_moves": 0,
+      "llm_calls_ok": 46,
+      "llm_attempts_failed": 1,
+      "input_tokens": 31041,
+      "output_tokens": 1824,
+      "output_tokens_median": 39.0,
+      "cost_usd_as_logged": 0,
+      "cost_usd_recomputed": 0.013872,
+      "cost_usd_per_turn": 0.000302,
+      "pricing_note": "list_price",
+      "latency_s_p50": 10.6,
+      "latency_s_mean": 20.3,
+      "latency_s_max": 75.7
+    },
+    {
+      "file": "20260829-161753-nim-9e2f21d6e3d0.jsonl",
+      "game": "nim",
+      "seed": 1,
+      "model": "google:gemini-3.5-flash-lite",
+      "outcome": "terminal",
+      "winner": "automa",
+      "turns": 6,
+      "plies": 6,
+      "automa_moves": 3,
+      "justified_moves": 3,
+      "fallbacks": {
+        "automa": 0,
+        "human": 0
+      },
+      "human_typed_moves": 0,
+      "llm_calls_ok": 3,
+      "llm_attempts_failed": 0,
+      "input_tokens": 811,
+      "output_tokens": 116,
+      "output_tokens_median": 40,
+      "cost_usd_as_logged": 0.000533,
+      "cost_usd_recomputed": 0.000533,
+      "cost_usd_per_turn": 0.000178,
+      "pricing_note": "list_price",
+      "latency_s_p50": 17.7,
+      "latency_s_mean": 16.8,
+      "latency_s_max": 32.0
+    }
+  ]
+}

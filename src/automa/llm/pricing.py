@@ -32,12 +32,20 @@ PRICES: dict[str, Price] = {
     "anthropic:claude-opus-5": Price(5.00, 25.00),
     "anthropic:claude-sonnet-5": Price(2.00, 10.00),
     "anthropic:claude-haiku-4-5": Price(1.00, 5.00),
-    # Gemini, on the free tier. The same model on a paid tier is NOT free: if you
-    # move off the free tier, replace this entry with Google's published rates, or
-    # every cost-per-turn figure in the changelog silently becomes zero. The
-    # `free_tier` label is emitted into each trajectory event as `pricing_note`,
-    # so the assumption is visible in the evidence rather than buried here.
-    "google:gemini-3.6-flash": Price(0.0, 0.0, free_tier=True),
+    # Google list prices, standard (non-batch) tier, read from
+    # https://ai.google.dev/gemini-api/docs/pricing on 2026-08-29.
+    #
+    # These were `free_tier=True` while the project ran on a free key. That is a
+    # trap worth naming: a free-tier entry reports $0.00 for every call, so moving
+    # to a paid key without updating this would have made every cost-per-turn figure
+    # in the changelog silently zero. The `free_tier` flag is emitted into each
+    # trajectory event as `pricing_note`, which is what kept the earlier $0.00
+    # figures labelled as an assumption rather than passed off as a measurement.
+    "google:gemini-3.5-flash-lite": Price(0.30, 2.50),
+    # NOTE: $0.75/$3.75 is promotional through 2026-12-31. It rises to $1.50/$7.50 on
+    # 2027-01-01, which would take this model from ~2.2x flash-lite to ~4.3x on
+    # Automa's input-heavy token mix. Revisit before quoting costs after that date.
+    "google:gemini-3.6-flash": Price(0.75, 3.75),
 }
 
 # Cache pricing is a multiple of the input rate.

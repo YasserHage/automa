@@ -19,3 +19,20 @@ def placeholder_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
     """
     monkeypatch.setenv("ANTHROPIC_API_KEY", "placeholder-not-a-real-key")
     monkeypatch.setenv("GEMINI_API_KEY", "placeholder-not-a-real-key")
+
+
+@pytest.fixture
+def install_provider(monkeypatch: pytest.MonkeyPatch):
+    """Swap the provider registry for a scripted backend, for the duration of a test.
+
+    Patching `resolve` inside `automa.llm.call` rather than the registry itself keeps
+    the substitution local to the call wrapper, which is the only place a provider is
+    ever looked up.
+    """
+    import automa.llm.call as call_module
+
+    def _install(provider):
+        monkeypatch.setattr(call_module, "resolve", lambda _name: provider)
+        return provider
+
+    return _install

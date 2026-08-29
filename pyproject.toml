@@ -25,6 +25,7 @@ dev = [
 [project.scripts]
 automa-hello = "automa.scripts.hello_llm:main"
 automa-show = "automa.trajectory.show:main"
+automa-play = "automa.scripts.play:main"
 automa-validate = "automa.scripts.validate_games:main"
 
 [tool.setuptools.packages.find]

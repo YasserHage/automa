@@ -13,9 +13,41 @@ class TestModelForRole:
         for role in config.DEFAULT_MODELS:
             assert ":" in config.model_for(role)
 
-    def test_env_var_overrides_the_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("AUTOMA_MODEL_TACTICIAN", "google:gemini-2.5-flash")
-        assert config.model_for("tactician") == "google:gemini-2.5-flash"
+    def test_per_role_env_var_overrides_the_default(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("AUTOMA_MODEL_TACTICIAN", "anthropic:claude-haiku-4-5")
+        assert config.model_for("tactician") == "anthropic:claude-haiku-4-5"
+        assert config.model_for("compiler") == config.DEFAULT_MODELS["compiler"]
+
+    def test_global_env_var_moves_every_role_at_once(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Moving the whole system to another model must not need a code change."""
+        monkeypatch.setenv("AUTOMA_MODEL", "anthropic:claude-sonnet-5")
+        for role in config.DEFAULT_MODELS:
+            assert config.model_for(role) == "anthropic:claude-sonnet-5"
+
+    def test_a_single_role_can_be_lifted_out_of_the_global_default(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The specific override wins, so the Compiler can differ from the Tactician."""
+        monkeypatch.setenv("AUTOMA_MODEL", "anthropic:claude-sonnet-5")
+        monkeypatch.setenv("AUTOMA_MODEL_COMPILER", "anthropic:claude-opus-5")
+        assert config.model_for("compiler") == "anthropic:claude-opus-5"
+        assert config.model_for("tactician") == "anthropic:claude-sonnet-5"
+
+    def test_an_empty_override_falls_through_instead_of_blanking_the_model(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """`AUTOMA_MODEL=` in a .env file is a common way to mean "unset"."""
+        monkeypatch.setenv("AUTOMA_MODEL", "")
+        monkeypatch.setenv("AUTOMA_MODEL_TACTICIAN", "")
+        assert config.model_for("tactician") == config.DEFAULT_MODELS["tactician"]
+
+    def test_every_role_defaults_to_the_same_model(self) -> None:
+        """Phase 3's comparison only tests the architecture if both arms match."""
+        assert set(config.DEFAULT_MODELS.values()) == {config.DEFAULT_MODEL}
 
     def test_every_default_model_has_a_registered_price(self) -> None:
         """An unpriced default would report cost as None for every single turn,
@@ -32,6 +64,14 @@ class TestModelForRole:
 
     def test_unknown_role_names_the_known_ones(self) -> None:
         with pytest.raises(ValueError, match="tactician"):
+            config.model_for("umpire")
+
+    def test_an_unknown_role_is_not_rescued_by_the_global_default(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A typo in a role name must read as a typo, not silently resolve."""
+        monkeypatch.setenv("AUTOMA_MODEL", "anthropic:claude-sonnet-5")
+        with pytest.raises(ValueError, match="umpire"):
             config.model_for("umpire")
 
 

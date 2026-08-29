@@ -19,7 +19,17 @@ load_dotenv()
 REPO_ROOT = Path(__file__).resolve().parents[2]
 TRAJECTORY_DIR = Path(os.environ.get("AUTOMA_TRAJECTORY_DIR", REPO_ROOT / "trajectories"))
 
-# Per-role models. Every role runs on Gemini Flash for now. Two consequences worth knowing:
+# The model every role uses unless told otherwise. Kept as a single constant rather
+# than repeated per role, because the one property that must not drift is that the
+# baseline and the agents run on the *same* model - see below.
+DEFAULT_MODEL = "google:gemini-3.5-flash-lite"
+
+#: Sets the default for every role at once. Per-role `AUTOMA_MODEL_<ROLE>` still wins,
+#: so a sweep can move one agent without disturbing the others.
+GLOBAL_MODEL_VAR = "AUTOMA_MODEL"
+
+# Per-role models. Every role runs on the same Gemini Flash Lite model for now. Two
+# consequences worth knowing:
 #
 #   * Cost per turn is ~$0, so the free tier's rate limits, not cost, are the
 #     binding constraint on how fast the evaluation battery can run.
@@ -27,16 +37,16 @@ TRAJECTORY_DIR = Path(os.environ.get("AUTOMA_TRAJECTORY_DIR", REPO_ROOT / "traje
 #     fair by construction - there is no "the agent got a better model" objection
 #     to answer, and no resource difference to disclose.
 #
-# The Anthropic backend stays fully implemented, so switching a role back is a
-# one-line change here or an AUTOMA_MODEL_<ROLE> override.
+# The Anthropic backend stays fully implemented, so switching a role is a change here,
+# or an AUTOMA_MODEL / AUTOMA_MODEL_<ROLE> override with no code change at all.
 DEFAULT_MODELS: dict[str, str] = {
-    "strategist": "google:gemini-3.6-flash",
-    "compiler": "google:gemini-3.6-flash",
-    "tactician": "google:gemini-3.6-flash",
+    "strategist": DEFAULT_MODEL,
+    "compiler": DEFAULT_MODEL,
+    "tactician": DEFAULT_MODEL,
     # The baseline must be a *fair* comparison, not a strawman. Same model as the
     # solution's agents; the difference under test is the architecture, not the
     # model. See plan.md Phase 3.
-    "baseline": "google:gemini-3.6-flash",
+    "baseline": DEFAULT_MODEL,
 }
 
 
@@ -76,20 +86,27 @@ def require_credentials(provider: str) -> None:
 def model_for(role: str) -> str:
     """Return the ``provider:model`` string for an agent role.
 
-    ``AUTOMA_MODEL_<ROLE>`` overrides the default, so an evaluation run can sweep
-    models without editing code.
+    Resolution order, most specific first:
+
+    1. ``AUTOMA_MODEL_<ROLE>`` - one role, for sweeping a single agent;
+    2. ``AUTOMA_MODEL`` - every role at once, for moving the whole system to a
+       different model without editing code;
+    3. :data:`DEFAULT_MODELS`.
+
+    The unknown-role check happens before any override is read, so a typo in a role
+    name is reported as a typo rather than silently picking up the global default.
     """
-    override = os.environ.get(f"AUTOMA_MODEL_{role.upper()}")
-    if override:
-        return override
-    try:
-        return DEFAULT_MODELS[role]
-    except KeyError:
+    if role not in DEFAULT_MODELS:
         raise ValueError(
             f"No model configured for role {role!r}. "
             f"Known roles: {sorted(DEFAULT_MODELS)}. "
             f"Set AUTOMA_MODEL_{role.upper()} to override."
-        ) from None
+        )
+    return (
+        os.environ.get(f"AUTOMA_MODEL_{role.upper()}")
+        or os.environ.get(GLOBAL_MODEL_VAR)
+        or DEFAULT_MODELS[role]
+    )
 
 
 def describe() -> dict[str, object]:

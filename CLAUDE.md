@@ -4,10 +4,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project state
 
-**Phase 1 is complete** (game module contract, two hand-written games, self-play harness);
-Phase 2 is next. Before writing any code, re-read `plan.md` in full; it is the authoritative
-spec for architecture, phase scope, and exit criteria. Do not paraphrase or summarize it
-away — refer back to it directly each session.
+**Phase 2 is complete.** The exit criterion is met: complete matches on both games with
+every Tactician decision and justification logged. Results, measurements and open items
+are in `docs/phase2_results.md`; per-match metrics in `docs/validation/phase2_metrics.json`.
+Phase 3 (baseline and evaluation harness) is next, and `plan.md` says it must never be cut.
+
+One caveat carried forward: both live matches ran with `--auto`, so no person has yet
+typed a move into a live match. The interactive path is implemented and tested, but the
+live demonstration is still owed and Phase 8's video needs it.
+
+Before writing any code, re-read `plan.md` in full; it is the authoritative spec for
+architecture, phase scope, and exit criteria. Do not paraphrase or summarize it away — refer
+back to it directly each session.
 
 The code lives in a `src/` layout under a single `automa` package, so the repository root
 holds only `src/`, `tests/`, `docs/`, and `trajectories/`. This deviates from the flat
@@ -181,7 +189,12 @@ Environment: Python 3.12, `.venv` at the repo root, editable install.
 .venv\Scripts\python -m automa.trajectory.show <file> # or: automa-show
 .venv\Scripts\python -m automa.scripts.validate_games --matches 500 \
     --json docs/validation/phase1.json                # or: automa-validate
+.venv\Scripts\python -m automa.scripts.play --game nim --seed 1   # or: automa-play
+.venv\Scripts\python -m automa.scripts.play --game dnup --auto    # unattended, no human
 ```
+
+Adding a console script needs `pip install -e . --no-deps` before the short name resolves;
+the `python -m` form works immediately.
 
 - `python -m automa.eval.run --target baseline` and `--target agent` (Phase 3) run the
   same fixed case battery against the baseline and the Automa solution and produce
@@ -229,6 +242,37 @@ here than an invented one: "the compiler reproduces the hand-written module" bec
 against rules somebody else wrote. Note the rulebook PDF is an **image-only scan** with no
 text layer, so Phase 4's ingestion cannot assume `pdftotext` will work.
 
+### The decider seam
+
+`automa/core/match.py` runs a match without knowing the game *or* whether a model is
+involved. `play_match` takes one `Decider` per player — `Callable[[TurnContext], int |
+Decision]` — enumerates the legal actions, hands them over, gets an **index** back, and
+applies the action itself. Invariant 1 stops being a rule anyone has to remember and becomes
+a type: a decider cannot express an illegal action, because the only thing it can return is
+a position in a list the core built. An out-of-range index raises `IllegalDecision` rather
+than being clamped.
+
+That is what keeps the loop in `core/`. The tactician imports `automa.llm` and therefore
+lives in `agents/`; the human decider does terminal I/O and lives in `scripts/play.py`; the
+core does neither. Phase 3 reuses `play_match` with a baseline decider, and Phase 6 with two
+tacticians — only the deciders change.
+
+Two parameters are reserved and currently raise or go unused rather than silently doing
+nothing: `initial=` (Phase 7, start from the hand actually dealt at the physical table) and
+`informant=` (Phase 5). **An informant is not a decider.** It supplies information only the
+table has — a drawn card, a die roll — and supplying a fact is neither a decision nor a
+corrective intervention; counting it as either would corrupt the primary metric. Neither Nim
+nor DNUP draws a card, so the schema by which a module declares what it is missing is
+designed in Phase 5, whose third game is specified to have **effect cards and a draw deck**
+so the mechanism is exercised against a real game rather than discovered in Phase 8. That
+game also closes the invariant 5 gap left open by Phase 1.
+
+When a tactician call fails after its retries, the decider plays a random legal action,
+marks the `Decision` as a fallback, and emits `core_event/tactician_fallback`. The match
+survives a provider outage, the substitution is on the record rather than hidden, and it
+still cannot be illegal — the core enumerated the list either way. `MatchResult.fallbacks`
+counts them separately.
+
 ### Agent contracts
 
 `src/automa/contracts.py` holds every agent's output type — `TacticianResponse`,
@@ -244,11 +288,24 @@ dropped as redundant. If it is ever reintroduced, disable its retries: `call_llm
 retry-with-feedback, and a nested loop would hide attempts from the trajectory, breaking
 invariant 3.
 
-**Models.** Every role defaults to `google:gemini-3.6-flash` (free tier). Two things
-follow: rate limits and availability, not cost, are the binding constraint — a real 503
-and a 21-second stall showed up in the very first run — and the Phase 3 baseline shares
-the agents' model, so that comparison tests the architecture rather than the model.
-`gemini-2.5-flash` is retired for new API keys; do not reintroduce it.
+**Models.** Every role defaults to `google:gemini-3.5-flash-lite` (free tier), set once as
+`config.DEFAULT_MODEL`. Resolution order is `AUTOMA_MODEL_<ROLE>` → `AUTOMA_MODEL` →
+`DEFAULT_MODELS`, so moving the whole system, or one agent, needs no code change. Keep all
+roles on one model unless there is a reason not to: the Phase 3 baseline shares the agents'
+model, which is what makes that comparison a test of the architecture rather than of the
+model. A model named in either variable should also have an entry in `llm/pricing.py`, or
+its cost logs as `unpriced_model` instead of a number.
+
+Rate limits and availability, not cost, are the binding constraint. Measured on
+`gemini-3.6-flash`: two real 503s inside a three-call Nim match (retried, recovered on
+attempt 3), and per-call latency of 3.1s median / 50.3s worst across ten DNUP turns.
+**The whole Gemini 2.5 family is retired for new API keys** — `gemini-2.5-flash`,
+`-flash-lite` and `-pro` all return `404 ... no longer available to new users` on
+`generateContent`. Confirmed by direct probe, not inferred. Do not reintroduce any of them,
+and note the trap: all three still appear in `models.list` for a key that cannot call them,
+so enumerating a model is never evidence that it will run. Only a real `generateContent`
+proves availability. A key from a Google project predating the retirement keeps 2.5 access;
+a freshly issued key does not.
 
 ### How the invariants are enforced
 
