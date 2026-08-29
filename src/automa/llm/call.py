@@ -15,10 +15,10 @@ from typing import Any
 
 from pydantic import BaseModel
 
-import config
-from llm.pricing import cost_usd, pricing_note
-from llm.providers import LLMRequest, resolve, split_model
-from trajectory.writer import TrajectoryWriter
+from automa import config
+from automa.llm.pricing import cost_usd, pricing_note
+from automa.llm.providers import LLMRequest, resolve, split_model
+from automa.trajectory.writer import TrajectoryWriter
 
 
 class LLMCallError(RuntimeError):

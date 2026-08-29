@@ -4,11 +4,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project state
 
-This repository currently contains only `plan.md`, the full execution plan for the project.
-No code, folder structure, or dependency manifest exists yet — Phase 0 (skeleton) has not
-been started. Before writing any code, re-read `plan.md` in full; it is the authoritative
-spec for architecture, phase scope, and exit criteria. Do not paraphrase or summarize it away
-— refer back to it directly each session.
+**Phase 0 is complete** (skeleton and logging spine); Phase 1 is next. Before writing any
+code, re-read `plan.md` in full; it is the authoritative spec for architecture, phase scope,
+and exit criteria. Do not paraphrase or summarize it away — refer back to it directly each
+session.
+
+The code lives in a `src/` layout under a single `automa` package, so the repository root
+holds only `src/`, `tests/`, `docs/`, and `trajectories/`. This deviates from the flat
+`core/`, `compiler/`, … layout `plan.md` describes: the packages and their responsibilities
+are unchanged, only their nesting is. The one consequence is that documented commands gain
+an `automa.` prefix — `python -m automa.eval.run`, not `python -m eval.run`.
 
 ## What this project is
 
@@ -145,17 +150,77 @@ what `plan.md` Phase 3 defines. Report a primary metric that reflects real user 
 per match, cost per turn, latency per turn), using 10+ cases where practical and
 including at least one deliberately hard case with an explanation of what it revealed.
 
-## Planned structure and commands (per `plan.md`, not yet built)
+## Structure and commands
 
-Phase 0 establishes: `core/`, `compiler/`, `agents/`, `games/`, `eval/`, `trajectories/`, and
-a `pyproject.toml` with pinned versions. Once built:
+```
+src/automa/
+  config.py          per-role model map, "provider:model" strings, env-overridable
+  core/              deterministic zone — NEVER imports a model client (see below)
+  llm/               the only code that reaches a model
+    call.py          call_llm() — the single wrapper (invariant 3)
+    pricing.py       priced / free-tier / unknown, kept strictly apart
+    providers/       vendor seam: base protocol, anthropic (done), gemini (stub)
+  trajectory/        JSONL event log + `show` renderer   <- code
+  agents/            Tactician (Phase 2), Strategist (Phase 6)
+  games/             hand-written game modules (Phase 1)
+  compiler/          rule material -> game module (Phase 4)
+  eval/              baseline + harness (Phase 3)
+  scripts/           runnable entry points
+tests/
+trajectories/        JSONL output, gitignored                <- data
+```
 
-- `python -m eval.run --target baseline` and `--target agent` run the same fixed case
-  battery against the baseline and the Automa solution and produce comparable JSON output.
+Note `trajectory/` (code) versus `trajectories/` (output) — one character apart.
+
+Environment: Python 3.12, `.venv` at the repo root, editable install.
+
+```bash
+.venv\Scripts\python -m pytest                        # offline, no API key needed
+.venv\Scripts\python -m ruff check .
+.venv\Scripts\python -m automa.scripts.hello_llm      # or: automa-hello
+.venv\Scripts\python -m automa.trajectory.show <file> # or: automa-show
+```
+
+- `python -m automa.eval.run --target baseline` and `--target agent` (Phase 3) run the
+  same fixed case battery against the baseline and the Automa solution and produce
+  comparable JSON output.
 - The game module contract is fixed: `initial_state()`, `legal_actions(state)`,
   `apply(state, action)`, `is_terminal(state)`, `winner(state)`, `describe_state(state, viewer)`.
-- Every LLM call must go through a single wrapper that logs agent name, full prompt, full
-  response, tokens, cost, latency, and retries to a per-match JSONL trajectory file.
+- Every LLM call must go through `automa.llm.call_llm`, which logs agent name, full
+  prompt, full response, tokens, cost, latency, and retries to a per-match JSONL
+  trajectory. Never call a provider SDK directly from anywhere else.
+
+### Agent contracts
+
+`src/automa/contracts.py` holds every agent's output type — `TacticianResponse`,
+`StrategistPolicy`, `CompilerOutput` — in one file, so the whole surface where a model
+can influence the game is reviewable at a glance. Pass one as `output_format=` to
+`call_llm`; it comes back validated on `result.parsed`. The module imports only Pydantic,
+so `automa.core` may depend on it without breaching invariants 1 and 2.
+
+Do not add a second structured-output layer (e.g. `instructor`) on the Anthropic path:
+`client.messages.parse` covers it natively and `call_llm` already removes parsing from
+every caller. If `instructor` is adopted for Gemini, disable its retries — `call_llm`
+owns retry-with-feedback, and a nested loop would hide attempts from the trajectory,
+breaking invariant 3. See the docstring in `llm/providers/gemini_provider.py`.
+
+### How the invariants are enforced
+
+Invariants 1 and 2 are checked by `tests/test_core_is_llm_free.py`, which AST-walks every
+module under `src/automa/core/` and fails if one imports `anthropic`, `automa.llm`, or any
+other provider SDK. If that test starts failing, the project's central architectural claim
+has stopped being true — fix the import, do not relax the test. Invariant 3 holds because
+`call_llm` is the only function that talks to a model.
+
+## Git
+
+**The user handles all commits in this repository. Never run `git commit`.** Finish the
+work, run the tests and lint, leave the changes in the working tree, and report what
+changed — the user stages and commits. Do not run `git add` on their behalf either, so
+their staging decisions stay open. Reading git state (`status`, `log`, `diff`) is fine.
+
+Commit boundaries and messages are how the user narrates this project's history, and for
+a hackathon submission that history is itself a graded deliverable.
 
 ## Working phase by phase
 
@@ -166,5 +231,5 @@ deliverables) must never be cut for time; if scope must shrink, cut Phase 9, the
 then reduce Phase 5 to one game (see the Effort distribution table in `plan.md`).
 
 The **Improvement Changelog** table in `plan.md` must be filled immediately after running
-`python -m eval.run` for a version — never reconstructed later — and must include at least
+`python -m automa.eval.run` for a version — never reconstructed later — and must include at least
 one experiment that was tried and discarded, with what was tried and why it was dropped.

@@ -13,7 +13,8 @@ from pathlib import Path
 from types import TracebackType
 from typing import Any
 
-from trajectory.events import SCHEMA_VERSION, EventType
+from automa.config import REPO_ROOT
+from automa.trajectory.events import SCHEMA_VERSION, EventType
 
 
 def _git_commit() -> dict[str, Any]:
@@ -29,7 +30,7 @@ def _git_commit() -> dict[str, Any]:
                 capture_output=True,
                 text=True,
                 timeout=5,
-                cwd=Path(__file__).resolve().parent.parent,
+                cwd=REPO_ROOT,
             )
         except (OSError, subprocess.SubprocessError):
             return None
@@ -64,7 +65,7 @@ class TrajectoryWriter:
         seeds: dict[str, Any] | None = None,
         run_id: str | None = None,
     ) -> None:
-        from config import TRAJECTORY_DIR  # imported late so tests can redirect it
+        from automa.config import TRAJECTORY_DIR  # late import so tests can redirect it
 
         self.label = label
         self.run_id = run_id or uuid.uuid4().hex[:12]

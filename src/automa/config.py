@@ -14,7 +14,9 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-REPO_ROOT = Path(__file__).resolve().parent
+# src/automa/config.py -> automa -> src -> repo root. Correct for the editable
+# install the README documents; set AUTOMA_TRAJECTORY_DIR to override.
+REPO_ROOT = Path(__file__).resolve().parents[2]
 TRAJECTORY_DIR = Path(os.environ.get("AUTOMA_TRAJECTORY_DIR", REPO_ROOT / "trajectories"))
 
 # Per-role models. The Strategist and Compiler reason hard but run rarely, so they

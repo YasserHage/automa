@@ -1,6 +1,7 @@
 """Render a trajectory as readable text.
 
-    python -m trajectory.show trajectories/<file>.jsonl [--full]
+    python -m automa.trajectory.show trajectories/<file>.jsonl [--full]
+    automa-show trajectories/<file>.jsonl [--full]
 
 The submission asks for trajectories that are easy to follow from the agent's
 instructions through to the final result. Raw JSONL is the archival format; this

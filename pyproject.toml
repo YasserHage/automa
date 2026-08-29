@@ -21,10 +21,12 @@ dev = [
     "ruff==0.16.5",
 ]
 
-[tool.setuptools]
-# Flat top-level packages, per plan.md: `python -m eval.run` must resolve.
-packages = ["core", "llm", "llm.providers", "trajectory", "agents", "compiler", "games", "eval"]
-py-modules = ["config"]
+[project.scripts]
+automa-hello = "automa.scripts.hello_llm:main"
+automa-show = "automa.trajectory.show:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

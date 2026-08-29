@@ -7,7 +7,7 @@ from typing import Any
 
 import anthropic
 
-from llm.providers.base import LLMRequest, LLMResponse
+from automa.llm.providers.base import LLMRequest, LLMResponse
 
 
 @functools.lru_cache(maxsize=1)

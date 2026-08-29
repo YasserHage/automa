@@ -17,21 +17,36 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-CORE = REPO_ROOT / "core"
+CORE = REPO_ROOT / "src" / "automa" / "core"
 
-FORBIDDEN_ROOTS = {"anthropic", "llm", "openai", "google", "cohere", "mistralai", "ollama"}
+#: Vendor SDKs, plus the project's own model-facing package. Matched against the
+#: full dotted path, so `automa.llm` is caught without banning `automa` itself.
+FORBIDDEN_PREFIXES = (
+    "anthropic",
+    "automa.llm",
+    "openai",
+    "google",
+    "cohere",
+    "mistralai",
+    "ollama",
+)
 
 
-def _imported_roots(tree: ast.AST) -> set[str]:
-    roots: set[str] = set()
+def _forbidden(dotted: str) -> bool:
+    return any(dotted == p or dotted.startswith(p + ".") for p in FORBIDDEN_PREFIXES)
+
+
+def _imported_paths(tree: ast.AST) -> set[str]:
+    """Every module path this file imports, as written."""
+    paths: set[str] = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
-            roots.update(alias.name.split(".")[0] for alias in node.names)
+            paths.update(alias.name for alias in node.names)
         elif isinstance(node, ast.ImportFrom):
-            # node.module is None for `from . import x`, which is always local.
+            # node.level > 0 is a relative import, which cannot escape automa.core.
             if node.level == 0 and node.module:
-                roots.add(node.module.split(".")[0])
-    return roots
+                paths.add(node.module)
+    return paths
 
 
 def _core_modules() -> list[Path]:
@@ -39,16 +54,30 @@ def _core_modules() -> list[Path]:
 
 
 def test_core_package_exists() -> None:
-    assert CORE.is_dir(), "core/ must exist - it is the deterministic zone"
-    assert _core_modules(), "core/ must contain at least __init__.py"
+    assert CORE.is_dir(), "src/automa/core/ must exist - it is the deterministic zone"
+    assert _core_modules(), "automa.core must contain at least __init__.py"
 
 
 @pytest.mark.parametrize("module", _core_modules(), ids=lambda p: p.name)
 def test_core_module_imports_no_model_client(module: Path) -> None:
     tree = ast.parse(module.read_text(encoding="utf-8"), filename=str(module))
-    offenders = _imported_roots(tree) & FORBIDDEN_ROOTS
+    offenders = sorted(p for p in _imported_paths(tree) if _forbidden(p))
     assert not offenders, (
-        f"{module.relative_to(REPO_ROOT)} imports {sorted(offenders)}. "
+        f"{module.relative_to(REPO_ROOT)} imports {offenders}. "
         "The core is deterministic: it enumerates legal actions and applies "
         "transitions with no model in the loop (invariants 1 and 2 in CLAUDE.md)."
     )
+
+
+def test_the_check_actually_catches_a_violation(tmp_path: Path) -> None:
+    """Guard the guard - a detector that cannot fail is not protecting anything."""
+    offender = tmp_path / "bad.py"
+    offender.write_text("from automa.llm import call_llm\nimport anthropic\n")
+    tree = ast.parse(offender.read_text())
+    assert sorted(p for p in _imported_paths(tree) if _forbidden(p)) == [
+        "anthropic",
+        "automa.llm",
+    ]
+    # ...and does not fire on the package's own legitimate imports.
+    clean = ast.parse("from automa.core.state import Match\nimport json\n")
+    assert not [p for p in _imported_paths(clean) if _forbidden(p)]

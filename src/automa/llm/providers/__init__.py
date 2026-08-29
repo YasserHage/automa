@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import functools
 
-from llm.providers.base import LLMRequest, LLMResponse, Provider
+from automa.llm.providers.base import LLMRequest, LLMResponse, Provider
 
 __all__ = ["LLMRequest", "LLMResponse", "Provider", "resolve", "split_model"]
 
@@ -31,11 +31,11 @@ def resolve(provider_name: str) -> Provider:
     that needs it, not the whole program.
     """
     if provider_name == "anthropic":
-        from llm.providers.anthropic_provider import AnthropicProvider
+        from automa.llm.providers.anthropic_provider import AnthropicProvider
 
         return AnthropicProvider()
     if provider_name == "google":
-        from llm.providers.gemini_provider import GeminiProvider
+        from automa.llm.providers.gemini_provider import GeminiProvider
 
         return GeminiProvider()
     raise ValueError(f"Unknown provider {provider_name!r}. Known providers: anthropic, google.")

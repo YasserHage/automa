@@ -7,7 +7,7 @@ free and $0 because we do not know the price - those must never look the same.
 
 from __future__ import annotations
 
-from llm.pricing import PRICES, Price, cost_usd, pricing_note
+from automa.llm.pricing import PRICES, Price, cost_usd, pricing_note
 
 
 def test_known_model_cost_matches_hand_calculation() -> None:

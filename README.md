@@ -35,24 +35,33 @@ copy .env.example .env      # then add your ANTHROPIC_API_KEY
 ## Commands
 
 ```bash
-.venv\Scripts\python -m pytest              # full suite, offline, no API key needed
-.venv\Scripts\python -m ruff check .        # lint
-.venv\Scripts\python scripts\hello_llm.py   # one real LLM call -> a trajectory
-.venv\Scripts\python -m trajectory.show trajectories\<file>.jsonl [--full]
+.venv\Scripts\python -m pytest                    # full suite, offline, no API key needed
+.venv\Scripts\python -m ruff check .              # lint
+.venv\Scripts\python -m automa.scripts.hello_llm  # one real LLM call -> a trajectory
+.venv\Scripts\python -m automa.trajectory.show trajectories\<file>.jsonl [--full]
 ```
+
+The last two are also installed as `automa-hello` and `automa-show`.
 
 ## Layout
 
+All code lives under one package, so the repository root stays to four directories:
+`src/`, `tests/`, `docs/`, `trajectories/`.
+
 | Path | What lives there |
 |---|---|
-| `core/` | Deterministic zone. Never imports a model client — enforced by a test. |
-| `llm/` | The single call wrapper every model call passes through, plus pricing. |
-| `llm/providers/` | Provider seam. Anthropic implemented; Gemini stubbed. |
-| `trajectory/` | JSONL event log — one file per run — and a reader. |
-| `agents/` | Tactician (Phase 2), Strategist (Phase 6). |
-| `compiler/` | Rule material → executable game module (Phase 4). |
-| `games/` | Hand-written game modules (Phase 1). |
-| `eval/` | Baseline and evaluation harness (Phase 3). |
+| `src/automa/core/` | Deterministic zone. Never imports a model client — enforced by a test. |
+| `src/automa/llm/` | The single call wrapper every model call passes through, plus pricing. |
+| `src/automa/llm/providers/` | Provider seam. Anthropic implemented; Gemini stubbed. |
+| `src/automa/trajectory/` | JSONL event log — one file per run — and a reader. |
+| `src/automa/agents/` | Tactician (Phase 2), Strategist (Phase 6). |
+| `src/automa/compiler/` | Rule material → executable game module (Phase 4). |
+| `src/automa/games/` | Hand-written game modules (Phase 1). |
+| `src/automa/eval/` | Baseline and evaluation harness (Phase 3). |
+| `trajectories/` | Run output. Gitignored; representative runs are committed explicitly. |
+
+Mind the near-identical pair: `src/automa/trajectory/` is the code, `trajectories/` is the
+data it writes.
 
 ## Invariants
 

@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from trajectory import SCHEMA_VERSION, TrajectoryWriter
+from automa.trajectory import SCHEMA_VERSION, TrajectoryWriter
 
 
 def read_events(path: Path) -> list[dict]:

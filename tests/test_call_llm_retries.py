@@ -14,10 +14,10 @@ from pathlib import Path
 import pytest
 from pydantic import BaseModel
 
-import llm.call as call_module
-from llm.call import LLMCallError, call_llm
-from llm.providers.base import LLMRequest, LLMResponse
-from trajectory import TrajectoryWriter
+import automa.llm.call as call_module
+from automa.llm.call import LLMCallError, call_llm
+from automa.llm.providers.base import LLMRequest, LLMResponse
+from automa.trajectory import TrajectoryWriter
 
 MODEL = "anthropic:claude-haiku-4-5"
 
