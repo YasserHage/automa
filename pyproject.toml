@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "automa"
+version = "0.1.0"
+description = "An AI agent that plays physical board and card games against you"
+requires-python = ">=3.11"
+# Pinned exactly: the reproduction guide must let a judge on a clean machine reach
+# the same result, and a floating range does not guarantee that.
+dependencies = [
+    "anthropic==1.2.0",
+    "pydantic==2.13.5",
+    "python-dotenv==1.2.3",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest==9.1.1",
+    "ruff==0.16.5",
+]
+
+[tool.setuptools]
+# Flat top-level packages, per plan.md: `python -m eval.run` must resolve.
+packages = ["core", "llm", "llm.providers", "trajectory", "agents", "compiler", "games", "eval"]
+py-modules = ["config"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]

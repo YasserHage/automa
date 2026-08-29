@@ -1,0 +1,19 @@
+# Environment
+.venv/
+venv/
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+build/
+dist/
+
+# Trajectory output. The format is a deliverable; individual run logs are not.
+# Representative trajectories for the submission are committed explicitly with
+# `git add -f trajectories/<file>.jsonl`.
+trajectories/*.jsonl
+!trajectories/.gitkeep
