@@ -23,7 +23,18 @@ from dataclasses import dataclass, field
 from types import ModuleType
 from typing import Any
 
-from automa.core.game import LABEL, TO_PLAY, TURN, Action, Player, State, Viewer
+from automa.core.game import (
+    LABEL,
+    TO_PLAY,
+    TURN,
+    UNAVAILABLE,
+    UNKNOWN,
+    Action,
+    Player,
+    State,
+    Viewer,
+    unavailable_answer,
+)
 from automa.trajectory.writer import TrajectoryWriter
 
 #: Matches are bounded for the same reason self-play playouts are: a game whose rules
@@ -37,6 +48,19 @@ class IllegalDecision(RuntimeError):
     Raised rather than clamped. A decider reaching outside the list is a bug in that
     decider, and silently playing a neighbouring action would hide the bug and
     corrupt the match at the same time.
+    """
+
+
+#: A turn can legitimately reveal two unfamiliar cards at once, but not endlessly. This
+#: bounds a module whose `resolve_unknown` fails to clear the gap it declared.
+MAX_UNKNOWNS_PER_TURN = 8
+
+
+class MissingInformant(RuntimeError):
+    """The module needs a fact and nothing can supply it.
+
+    Raised rather than guessed. A match that invented the answer would be playing a
+    different game from the one on the table, and would do it silently.
     """
 
 
@@ -94,15 +118,55 @@ class Decision:
 
 Decider = Callable[[TurnContext], "int | Decision"]
 
-#: Reserved for Phase 5, and unused here.
+#: Supplies information only the physical table has - what a just-revealed card does,
+#: what was drawn, what a die showed.
 #:
-#: An informant supplies information only the physical table has - the card Automa
-#: just drew, a die roll, a revealed bid. It is deliberately *not* a decider:
-#: supplying a fact is neither a decision nor a corrective intervention, and counting
-#: it as either would corrupt the primary metric. The schema by which a module
-#: declares what it is missing gets designed in Phase 5 against a game that actually
-#: draws cards; passing one before then raises rather than silently doing nothing.
-Informant = Callable[[TurnContext], Any]
+#: Deliberately **not** a decider. A decider chooses among options the core enumerated;
+#: an informant supplies a fact the core does not have and cannot derive. Supplying a
+#: fact is neither a decision nor a corrective intervention, so it is logged separately
+#: and excluded from the primary metric - otherwise telling the system what a card does
+#: would count against it exactly as getting a rule wrong does.
+#:
+#: Receives the ``unknown`` dict the module put in state, and returns the answer that
+#: module's ``resolve_unknown`` will fold back in.
+Informant = Callable[[TurnContext, dict[str, Any]], dict[str, Any]]
+
+
+def uninformed(_context: TurnContext, unknown: dict[str, Any]) -> dict[str, Any]:
+    """An :data:`Informant` with nothing to offer: every question goes unanswered.
+
+    Not a placeholder. It is what an unattended match legitimately supplies when there is
+    no person at the table, and passing it is meaningfully different from passing nothing
+    at all: ``None`` means the caller forgot, and raises; this means nobody could say, and
+    the match carries on with the gap on the record. A module that cannot finish under it
+    was never fit to be played.
+    """
+    return unavailable_answer(unknown)
+
+
+def compose(*informants: Informant) -> Informant:
+    """One informant from several, each answering the kinds of question it knows.
+
+    A match at a physical table has two sources at once: the person reads the cards off
+    the table, and the catalog says what those cards do. Neither can answer the other's
+    questions, and neither should have to know the other exists - so they are asked in
+    order and the first real answer wins.
+
+    An informant that cannot help returns :data:`~automa.core.game.UNAVAILABLE`, which
+    is exactly what "ask the next one" looks like. When nobody can help, the question is
+    answered unavailable - the module's own fallback then applies, as it does for a
+    person who cannot say.
+    """
+
+    def _ask(ctx: TurnContext, unknown: dict[str, Any]) -> dict[str, Any]:
+        for informant in informants:
+            answer = informant(ctx, unknown)
+            if answer is not None and not answer.get(UNAVAILABLE):
+                return answer
+        return unavailable_answer(unknown)
+
+    return _ask
+
 
 #: Called after each applied action, for interfaces that want to narrate the match.
 #: Keeps terminal I/O out of the deterministic core.
@@ -119,6 +183,9 @@ class MatchResult:
     plies: int = 0
     fallbacks: dict[Player, int] = field(default_factory=dict)
     interventions: dict[Player, int] = field(default_factory=dict)
+    #: Facts supplied by the table. Counted apart from interventions on purpose: being
+    #: asked what a card does is not the system getting a rule wrong.
+    informed: int = 0
     first_intervention_turn: int | None = None
     """Turns survived before a human would have had to step in - the primary metric."""
     invariant_violations: list[str] = field(default_factory=list)
@@ -182,13 +249,10 @@ def play_match(
         initial: Start from this state instead of ``game.initial_state(seed)``.
             Reserved for Phase 7, which starts a match from the hand actually dealt
             at the physical table rather than a simulated one.
-        informant: Reserved for Phase 5; see :data:`Informant`.
+        informant: Supplies facts the module says it is missing; see
+            :data:`Informant`. A game that can raise `unknown` needs one, or the
+            match cannot proceed.
     """
-    if informant is not None:
-        raise NotImplementedError(
-            "informant is reserved for Phase 5, when a game with a face-down deck "
-            "makes the per-turn information loop real. See automa.core.match.Informant."
-        )
     missing = [p for p in game.PLAYERS if p not in deciders]
     if missing:
         raise ValueError(f"no decider for {missing}; {game.NAME} needs one per player")
@@ -214,6 +278,13 @@ def play_match(
     ply = 0
     try:
         while ply < max_plies:
+            if game.is_terminal(state):
+                break
+
+            # Information first: a module missing a fact cannot meaningfully enumerate
+            # what is legal until it has that fact.
+            state, asked = _resolve_unknowns(game, state, informant, trajectory, ply)
+            result.informed += asked
             if game.is_terminal(state):
                 break
 
@@ -304,8 +375,71 @@ def play_match(
         fallbacks=result.fallbacks,
         interventions=result.interventions,
         first_intervention_turn=result.first_intervention_turn,
+        informed=result.informed,
     )
     return result
+
+
+def _resolve_unknowns(
+    game: ModuleType,
+    state: State,
+    informant: Informant | None,
+    trajectory: TrajectoryWriter | None,
+    ply: int,
+) -> tuple[State, int]:
+    """Close every gap the module declares, before anyone is asked to decide.
+
+    Loops because answering one question can reveal another - two unfamiliar cards
+    turning up on the same turn. Bounded, so a module that never clears its own
+    ``unknown`` fails loudly rather than hanging.
+    """
+    asked = 0
+    for _ in range(MAX_UNKNOWNS_PER_TURN):
+        unknown = state.get(UNKNOWN)
+        if not unknown:
+            return state, asked
+        if informant is None:
+            raise MissingInformant(
+                f"{game.NAME} needs information it cannot derive "
+                f"({unknown.get('kind')}: {unknown.get('prompt')}), but no informant "
+                "was supplied. Pass one to play_match."
+            )
+        resolve = getattr(game, "resolve_unknown", None)
+        if resolve is None:
+            raise MissingInformant(
+                f"{game.NAME} set {UNKNOWN!r} but does not implement resolve_unknown, "
+                "so an answer would have nowhere to go."
+            )
+
+        context = TurnContext(
+            game=game,
+            state=state,
+            player=state[TO_PLAY],
+            viewer=viewer_for(state[TO_PLAY]),
+            actions=[],
+            turn=state[TURN],
+            ply=ply,
+            trajectory=trajectory,
+        )
+        answer = informant(context, unknown)
+        _emit(
+            trajectory,
+            "table_information",
+            ply=ply,
+            turn=state[TURN],
+            kind=unknown.get("kind"),
+            prompt=unknown.get("prompt"),
+            answer=answer,
+            note="A fact supplied by the table - not a decision, not a correction.",
+        )
+        state = resolve(state, answer)
+        asked += 1
+
+    raise MissingInformant(
+        f"{game.NAME} still reports missing information after "
+        f"{MAX_UNKNOWNS_PER_TURN} answers on a single turn; resolve_unknown is not "
+        "clearing what it declared."
+    )
 
 
 def _normalise(decision: int | Decision) -> Decision:

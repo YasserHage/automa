@@ -9,12 +9,13 @@ was chosen. That is the property a judge can verify from a log file alone.
 from __future__ import annotations
 
 import json
+import types
 from pathlib import Path
 from types import ModuleType
 
 import pytest
 
-from automa.core.game import AUTOMA, HUMAN, TO_PLAY, Viewer
+from automa.core.game import AUTOMA, HUMAN, TO_PLAY, Viewer, settle
 from automa.core.loader import available_games, load_game
 from automa.core.match import (
     Decision,
@@ -23,6 +24,7 @@ from automa.core.match import (
     TurnContext,
     play_match,
     random_decider,
+    uninformed,
     viewer_for,
 )
 from automa.trajectory import TrajectoryWriter
@@ -51,7 +53,7 @@ def core_events(path: Path, name: str) -> list[dict]:
 
 
 def test_a_match_runs_to_a_terminal_state(game: ModuleType) -> None:
-    result = play_match(game, randoms(game), seed=1)
+    result = play_match(game, randoms(game), seed=1, informant=uninformed)
     assert result.outcome == "terminal"
     assert result.winner in (*game.PLAYERS, None)
     assert result.plies > 0
@@ -60,13 +62,13 @@ def test_a_match_runs_to_a_terminal_state(game: ModuleType) -> None:
 
 def test_the_same_seed_replays_the_same_match(game: ModuleType) -> None:
     """Needed by Phase 3: a battery is only comparable if a case is reproducible."""
-    first = play_match(game, randoms(game), seed=7)
-    second = play_match(game, randoms(game), seed=7)
+    first = play_match(game, randoms(game), seed=7, informant=uninformed)
+    second = play_match(game, randoms(game), seed=7, informant=uninformed)
     assert (first.winner, first.plies, first.turns) == (second.winner, second.plies, second.turns)
 
 
 def test_max_plies_aborts_rather_than_hanging(game: ModuleType) -> None:
-    result = play_match(game, randoms(game), seed=1, max_plies=2)
+    result = play_match(game, randoms(game), seed=1, max_plies=2, informant=uninformed)
     assert result.outcome == "aborted"
     assert result.plies == 2
 
@@ -77,8 +79,8 @@ def test_a_decider_may_end_the_match(game: ModuleType) -> None:
     def quitter(ctx: TurnContext) -> int:
         raise MatchAbandoned
 
-    deciders = {**randoms(game), game.initial_state(1)[TO_PLAY]: quitter}
-    result = play_match(game, deciders, seed=1)
+    deciders = {**randoms(game), settle(game, game.initial_state(1))[TO_PLAY]: quitter}
+    result = play_match(game, deciders, seed=1, informant=uninformed)
     assert result.outcome == "abandoned"
 
 
@@ -87,7 +89,7 @@ def test_a_decider_may_end_the_match(game: ModuleType) -> None:
 
 def test_every_applied_action_was_enumerated_first(game: ModuleType, tmp_path: Path) -> None:
     with TrajectoryWriter("match", directory=tmp_path) as traj:
-        play_match(game, randoms(game), seed=3, trajectory=traj)
+        play_match(game, randoms(game), seed=3, trajectory=traj, informant=uninformed)
         path = traj.path
 
     enumerated = {e["ply"]: e for e in core_events(path, "legal_actions_enumerated")}
@@ -104,7 +106,7 @@ def test_every_applied_action_was_enumerated_first(game: ModuleType, tmp_path: P
 
 def test_the_match_is_bookended_in_the_trajectory(game: ModuleType, tmp_path: Path) -> None:
     with TrajectoryWriter("match", directory=tmp_path) as traj:
-        result = play_match(game, randoms(game), seed=3, trajectory=traj)
+        result = play_match(game, randoms(game), seed=3, trajectory=traj, informant=uninformed)
         path = traj.path
 
     start = core_events(path, "match_start")
@@ -125,13 +127,14 @@ def test_an_out_of_range_index_is_refused(game: ModuleType) -> None:
         return len(ctx.actions)  # one past the end
 
     with pytest.raises(IllegalDecision, match="only 0.."):
-        play_match(game, {p: cheat for p in game.PLAYERS}, seed=1)
+        play_match(game, {p: cheat for p in game.PLAYERS}, seed=1, informant=uninformed)
 
 
 def test_a_negative_index_is_refused(game: ModuleType) -> None:
     """Python would happily read -1 as the last action."""
     with pytest.raises(IllegalDecision):
-        play_match(game, {p: (lambda ctx: -1) for p in game.PLAYERS}, seed=1)
+        play_match(game, {p: (lambda ctx: -1) for p in game.PLAYERS}, seed=1,
+                   informant=uninformed)
 
 
 def test_a_decider_returning_the_wrong_type_is_refused() -> None:
@@ -156,7 +159,7 @@ def test_fallback_decisions_are_counted_separately(game: ModuleType) -> None:
         return Decision(index=0, justification="model unreachable", fallback=True)
 
     deciders = {**randoms(game), AUTOMA: always_fallback}
-    result = play_match(game, deciders, seed=1)
+    result = play_match(game, deciders, seed=1, informant=uninformed)
     assert result.fallbacks[AUTOMA] > 0
     assert result.fallbacks[HUMAN] == 0
 
@@ -169,11 +172,59 @@ def test_a_supplied_initial_state_replaces_the_seeded_deal() -> None:
     assert result.outcome == "terminal"
 
 
-def test_passing_an_informant_fails_loudly_rather_than_silently() -> None:
-    """Reserved for Phase 5. A no-op would look like it worked."""
+def test_an_informant_is_harmless_for_a_game_that_needs_nothing() -> None:
+    """Nim never lacks a fact, so its informant is never called."""
     game = load_game("nim")
-    with pytest.raises(NotImplementedError, match="Phase 5"):
-        play_match(game, randoms(game), seed=1, informant=lambda ctx: None)
+    calls: list[object] = []
+
+    result = play_match(
+        game, randoms(game), seed=1,
+        informant=lambda ctx, unknown: calls.append(unknown) or {},
+    )
+    assert result.outcome == "terminal"
+    assert result.informed == 0
+    assert not calls, "a game with no unknowns must never ask"
+
+
+def test_a_game_needing_information_without_an_informant_fails_loudly() -> None:
+    """Guessing the answer would silently play a different game from the one on the table."""
+    from automa.core.game import UNKNOWN
+    from automa.core.match import MissingInformant
+
+    game = load_game("nim")
+    needy = types.ModuleType("needy")
+    for attr in dir(game):
+        if not attr.startswith("__"):
+            setattr(needy, attr, getattr(game, attr))
+    needy.NAME = "needy"
+    needy.initial_state = lambda seed=None: {
+        **game.initial_state(seed),
+        UNKNOWN: {"kind": "card_effect", "prompt": "what does this do?"},
+    }
+
+    with pytest.raises(MissingInformant, match="no informant"):
+        play_match(needy, randoms(game), seed=1)
+
+
+def test_a_module_that_never_clears_its_unknown_is_bounded() -> None:
+    """A resolve_unknown that does not resolve would otherwise hang the match."""
+    from automa.core.game import UNKNOWN
+    from automa.core.match import MissingInformant
+
+    game = load_game("nim")
+    stuck = types.ModuleType("stuck")
+    for attr in dir(game):
+        if not attr.startswith("__"):
+            setattr(stuck, attr, getattr(game, attr))
+    stuck.NAME = "stuck"
+    stuck.initial_state = lambda seed=None: {
+        **game.initial_state(seed),
+        UNKNOWN: {"kind": "loop", "prompt": "again?"},
+    }
+    stuck.resolve_unknown = lambda state, answer: state  # never clears it
+
+    with pytest.raises(MissingInformant, match="still reports missing information"):
+        play_match(stuck, randoms(game), seed=1, informant=lambda ctx, u: {})
 
 
 # -- the view boundary -----------------------------------------------------
@@ -187,7 +238,9 @@ def test_each_player_decides_through_their_own_view(game: ModuleType) -> None:
         seen.append((ctx.player, ctx.viewer))
         return 0
 
-    play_match(game, {p: watcher for p in game.PLAYERS}, seed=1, max_plies=4)
+    play_match(
+        game, {p: watcher for p in game.PLAYERS}, seed=1, max_plies=4, informant=uninformed
+    )
     assert seen
     for player, viewer in seen:
         assert viewer == viewer_for(player)

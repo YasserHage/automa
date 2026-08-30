@@ -1,7 +1,7 @@
 """The Tactician: the fast cycle, one decision per turn.
 
 It receives the board as Automa may see it, the active policy when there is one, and
-a numbered list of legal actions. It returns an index and one line of justification.
+a numbered list of legal actions. It returns an index, and nothing else.
 That is the entire surface through which a model touches the game.
 
 Everything that makes an illegal move impossible lives outside this file. The core
@@ -68,10 +68,7 @@ def tactician_decider(policy: str | None = None, *, max_attempts: int = 3):
         except LLMCallError as exc:
             return _fallback(ctx, str(exc))
 
-        return Decision(
-            index=result.parsed.action_index,
-            justification=result.parsed.justification,
-        )
+        return Decision(index=result.parsed.action_index)
 
     return decide
 

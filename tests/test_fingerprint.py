@@ -18,6 +18,7 @@ import types
 import pytest
 
 from automa.compiler import fingerprint as fp
+from automa.core.game import settle
 from automa.core.loader import load_game
 from automa.core.selfplay import random_playout
 
@@ -92,7 +93,9 @@ def test_a_module_missing_an_action_kind_is_caught() -> None:
 def test_a_module_with_the_wrong_deck_is_caught() -> None:
     """Right rules, wrong components - the player-count trim missed, say."""
     def short_deal(seed=None):
-        state = DNUP.initial_state(seed)
+        # Settled first: DNUP now opens by asking the table what was dealt, so the
+        # hands to trim only exist once that question has been answered.
+        state = settle(DNUP, DNUP.initial_state(seed))
         hands = {p: state["hands"][p][:-2] for p in DNUP.PLAYERS}
         return {**state, "hands": hands}
 

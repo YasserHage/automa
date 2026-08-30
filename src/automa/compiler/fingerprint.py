@@ -26,7 +26,7 @@ from dataclasses import asdict, dataclass, field
 from types import ModuleType
 from typing import Any
 
-from automa.core.game import LABEL, TO_PLAY, action_shape
+from automa.core.game import LABEL, TO_PLAY, action_shape, settle
 
 
 @dataclass
@@ -105,7 +105,7 @@ def collect(module: ModuleType, matches: int = 40, max_plies: int = 1000) -> Fin
 
     for seed in range(matches):
         rng = random.Random(f"fingerprint-{seed}")
-        state = module.initial_state(seed)
+        state = settle(module, module.initial_state(seed))
         if fp.component_count is None:
             fp.component_count = _component_count(state)
 
@@ -235,6 +235,9 @@ def state_key_report(module: ModuleType, seed: int = 0) -> str:
     state = module.initial_state(seed)
     if not isinstance(state, dict):
         return f"state is {type(state).__name__}, not a dict"
+    # Settled first: a module that asks the table what was dealt opens with empty hands,
+    # and a reviewer needs to see the vocabulary of a state that is actually playable.
+    state = settle(module, state)
     lines = [f"{module.NAME} state keys (seed {seed}):"]
     for key, value in sorted(state.items()):
         preview = repr(value)

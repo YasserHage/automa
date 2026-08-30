@@ -1,0 +1,170 @@
+/* Design tokens. Custom properties only - no selectors that paint anything.
+ *
+ * Colour is semantic: components never name a hex value, so retheming happens here
+ * and nowhere else. The full light palette is defined on bare `:root`; dark
+ * *overrides* the same names twice, once under `prefers-color-scheme` (guarded so an
+ * explicit light choice wins) and once under `[data-theme="dark"]` (so an explicit
+ * dark choice wins on a light system). No colour is ever defined only inside a media
+ * query.
+ *
+ * Contrast targets, checked in both themes: body text >= 7:1 (AAA), secondary text
+ * >= 4.5:1, interactive borders and focus rings >= 3:1 (WCAG 1.4.11). Disabled
+ * states use dedicated tokens rather than `opacity`, so they still clear 3:1.
+ */
+
+:root {
+  color-scheme: light dark;
+
+  /* -- shape ------------------------------------------------------------- */
+  --radius-sm: 10px;
+  --radius-md: 16px;
+  --radius-lg: 24px;
+  --radius-xl: 32px;
+  --radius-pill: 999px;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+
+  --font-sans: ui-sans-serif, system-ui, "Segoe UI Variable Text", "Segoe UI",
+    -apple-system, sans-serif;
+  --font-mono: ui-monospace, "Cascadia Mono", "Consolas", "SF Mono", monospace;
+
+  --dur: 200ms;
+  --ease: cubic-bezier(0.2, 0.6, 0.2, 1);
+
+  --shadow-sm: 0 1px 2px rgb(15 23 42 / 6%), 0 1px 3px rgb(15 23 42 / 4%);
+  --shadow-md: 0 4px 12px rgb(15 23 42 / 8%), 0 2px 4px rgb(15 23 42 / 4%);
+  --shadow-lg: 0 12px 32px rgb(15 23 42 / 12%), 0 4px 8px rgb(15 23 42 / 6%);
+
+  /* -- light palette ----------------------------------------------------- */
+  --bg: #f6f7f9;
+  --surface: #ffffff;
+  --surface-raised: #ffffff;
+  --surface-sunken: #eef0f4;
+  --border: #d8dce4;
+  --border-strong: #9aa3b2;
+
+  --text: #14181f;          /* 15.9:1 on --surface */
+  --text-muted: #545c6b;    /*  7.2:1 on --surface */
+  --text-faint: #6b7280;    /*  5.1:1 on --surface */
+
+  --accent: #1d4ed8;
+  --accent-hover: #1e40af;
+  --accent-contrast: #ffffff;
+  --accent-soft: #e6ecfd;
+
+  --ok: #0f6b3f;
+  --ok-soft: #e2f3ea;
+  --warn: #8a5300;
+  --warn-soft: #fdf0dc;
+  --danger: #b3261e;
+  --danger-soft: #fce9e7;
+
+  --focus: #1d4ed8;
+
+  /* Disabled is its own colour pair, never `opacity` - opacity on top of a
+   * variable background lands wherever it lands, and usually below 3:1. */
+  --disabled-bg: #e7e9ee;
+  --disabled-text: #6b7280;
+  --disabled-border: #c3c8d2;
+
+  /* Roles used by the play screen's transcript. */
+  --automa-soft: #eef2ff;
+  --automa-border: #c7d2fe;
+  --human-soft: #ecfdf5;
+  --human-border: #a7f3d0;
+  --question-soft: #fdf6e3;
+  --question-border: #e8d49a;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0e1116;
+    --surface: #171b22;
+    --surface-raised: #1e242d;
+    --surface-sunken: #12161c;
+    --border: #2c333f;
+    --border-strong: #4d5766;
+
+    --text: #e8ecf2;         /* 13.4:1 on --surface */
+    --text-muted: #a6b0bf;   /*  7.1:1 on --surface */
+    --text-faint: #8b95a5;   /*  5.2:1 on --surface */
+
+    --accent: #7ea2ff;
+    --accent-hover: #9db8ff;
+    --accent-contrast: #0b1020;
+    --accent-soft: #1b2540;
+
+    --ok: #5fd39b;
+    --ok-soft: #122b20;
+    --warn: #e5b567;
+    --warn-soft: #2e2413;
+    --danger: #f28b82;
+    --danger-soft: #331d1c;
+
+    --focus: #7ea2ff;
+
+    --disabled-bg: #232932;
+    --disabled-text: #8b95a5;
+    --disabled-border: #39414e;
+
+    --automa-soft: #1a2038;
+    --automa-border: #2f3a5c;
+    --human-soft: #10261f;
+    --human-border: #22483a;
+    --question-soft: #2b2413;
+    --question-border: #4d4326;
+
+    --shadow-sm: 0 1px 2px rgb(0 0 0 / 40%);
+    --shadow-md: 0 4px 12px rgb(0 0 0 / 45%);
+    --shadow-lg: 0 12px 32px rgb(0 0 0 / 55%);
+  }
+}
+
+/* Repeated verbatim so an explicit toggle wins in both directions - on a light
+ * system as well as a dark one. */
+:root[data-theme="dark"] {
+  --bg: #0e1116;
+  --surface: #171b22;
+  --surface-raised: #1e242d;
+  --surface-sunken: #12161c;
+  --border: #2c333f;
+  --border-strong: #4d5766;
+
+  --text: #e8ecf2;
+  --text-muted: #a6b0bf;
+  --text-faint: #8b95a5;
+
+  --accent: #7ea2ff;
+  --accent-hover: #9db8ff;
+  --accent-contrast: #0b1020;
+  --accent-soft: #1b2540;
+
+  --ok: #5fd39b;
+  --ok-soft: #122b20;
+  --warn: #e5b567;
+  --warn-soft: #2e2413;
+  --danger: #f28b82;
+  --danger-soft: #331d1c;
+
+  --focus: #7ea2ff;
+
+  --disabled-bg: #232932;
+  --disabled-text: #8b95a5;
+  --disabled-border: #39414e;
+
+  --automa-soft: #1a2038;
+  --automa-border: #2f3a5c;
+  --human-soft: #10261f;
+  --human-border: #22483a;
+  --question-soft: #2b2413;
+  --question-border: #4d4326;
+
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 40%);
+  --shadow-md: 0 4px 12px rgb(0 0 0 / 45%);
+  --shadow-lg: 0 12px 32px rgb(0 0 0 / 55%);
+}

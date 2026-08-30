@@ -15,21 +15,21 @@ from automa.contracts import CompilerOutput, Priority, StrategistPolicy, Tactici
 
 
 class TestTacticianResponse:
-    def test_accepts_an_index_and_a_justification(self) -> None:
-        r = TacticianResponse(action_index=2, justification="Denies them the blue set.")
-        assert r.action_index == 2
+    def test_accepts_an_index(self) -> None:
+        assert TacticianResponse(action_index=2).action_index == 2
 
     def test_rejects_a_negative_index(self) -> None:
         with pytest.raises(ValidationError):
-            TacticianResponse(action_index=-1, justification="nope")
+            TacticianResponse(action_index=-1)
 
     def test_cannot_express_an_action_that_is_not_in_the_list(self) -> None:
-        """Invariant 1, in the type system: there is no free-text action field."""
-        assert set(TacticianResponse.model_fields) == {"action_index", "justification"}
+        """Invariant 1, in the type system: there is no free-text action field.
 
-    def test_requires_a_justification(self) -> None:
-        with pytest.raises(ValidationError):
-            TacticianResponse(action_index=0, justification="")
+        The index is now the *only* field. A justification was specified in `plan.md` and
+        removed by decision once measured: about half of every response's output tokens,
+        read by nothing, and often confidently wrong.
+        """
+        assert set(TacticianResponse.model_fields) == {"action_index"}
 
 
 class TestStrategistPolicy:

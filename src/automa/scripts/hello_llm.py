@@ -76,7 +76,6 @@ def main() -> int:
     cost = "unpriced" if result.cost_usd is None else f"${result.cost_usd:.6f}"
     print(f"model       {result.model}")
     print(f"chose       [{result.parsed.action_index}] {chosen}")
-    print(f"because     {result.parsed.justification}")
     print(f"attempts    {result.attempts}")
     print(f"tokens      in={result.input_tokens} out={result.output_tokens}")
     print(f"cost        {cost}")

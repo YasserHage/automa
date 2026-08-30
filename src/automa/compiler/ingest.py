@@ -11,9 +11,15 @@ Phase 3 is the first caller - it needs the pages to generate the baseline's rule
 brief - and Phase 4 extends this into full rule ingestion. It lives here rather than in
 ``eval/`` because ingestion is the Compiler's job; Phase 3 is only borrowing it.
 
-Scope is deliberately narrow: JPEG (``/DCTDecode``) images, which is what a scanned
-page almost always is. Anything else is reported rather than silently skipped, because
-a Compiler that quietly ingested half a rulebook would be worse than one that refused.
+Real rule material comes in both shapes, and the difference is not cosmetic. The DNUP
+rulebook is an image-only scan: ``pdftotext`` returns two bytes and the pages have to be
+recovered as JPEGs. The Sushi Go rulebook is the opposite - 21KB of extractable text,
+with several hundred *card illustrations* embedded in it. Handing the image extractor to
+Sushi Go would send a compiler hundreds of thumbnails and no rules at all.
+
+So :func:`read_material` looks first and decides: text where there is text, page images
+where there is not. Getting that wrong is silent and expensive, which is why it is a
+decision the code makes explicitly rather than something a caller has to know.
 """
 
 from __future__ import annotations
@@ -21,6 +27,15 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from pathlib import Path
+
+#: Suffixes read as text directly, without going near a PDF parser. Rules pasted into a
+#: text file are rule material as much as a scanned manual is.
+TEXT_SUFFIXES: frozenset[str] = frozenset({".txt", ".md", ".markdown", ".text"})
+
+#: Below this, a "text layer" is page furniture - a title, a page number, an artefact of
+#: how the scan was produced - not rules anyone could compile from. DNUP's image-only
+#: scan yields 2 characters; Sushi Go yields ~21,000. Nothing real sits near the line.
+MIN_TEXT_CHARS = 500
 
 #: PDF image objects, matched on the raw bytes. Parsing the object graph properly
 #: would need a PDF library; for recovering page scans this is enough, and it keeps
@@ -114,3 +129,83 @@ def as_message_parts(pages: list[PageImage], text: str) -> list[dict]:
         {"type": "text", "text": text},
         *({"type": "image", "mime_type": p.mime_type, "data": p.data} for p in pages),
     ]
+
+
+def pdf_text(path: Path | str) -> str:
+    """The text layer of a PDF, or an empty string if it has none.
+
+    Uses `pypdf` rather than shelling out to `pdftotext`: poppler happens to be
+    installed on this machine and would not be on a judge's, and a pinned library is
+    the reproducible answer for something the reproduction guide depends on.
+    """
+    from pypdf import PdfReader
+
+    path = Path(path)
+    try:
+        reader = PdfReader(str(path))
+    except Exception as exc:  # noqa: BLE001 - a malformed PDF is the caller's problem
+        raise IngestError(f"cannot read {path} as a PDF: {exc}") from exc
+    pages = [(page.extract_text() or "") for page in reader.pages]
+    return "\n\n".join(pages).strip()
+
+
+@dataclass(frozen=True)
+class Material:
+    """Submitted rule material, in whichever form it actually exists."""
+
+    source: str
+    text: str = ""
+    pages: list[PageImage] = None  # type: ignore[assignment]
+
+    def __post_init__(self) -> None:
+        if self.pages is None:
+            object.__setattr__(self, "pages", [])
+
+    @property
+    def kind(self) -> str:
+        return "text" if self.text else "images"
+
+    def describe(self) -> str:
+        if self.text:
+            return f"{self.source}: text layer, {len(self.text):,} characters"
+        return f"{self.source}: scanned, {len(self.pages)} page image(s)"
+
+
+def read_material(path: Path | str) -> Material:
+    """Read rule material, choosing the extraction that actually applies.
+
+    Text where the PDF has a text layer; page images where it does not. The choice is
+    made here rather than by the caller because getting it wrong fails *silently* - a
+    compiler handed 500 card thumbnails instead of rules produces a confidently wrong
+    module, not an error.
+
+    Raises:
+        IngestError: Neither path yields anything usable.
+    """
+    path = Path(path)
+
+    # Plain text, taken at face value. A person with rules in a text file, a markdown
+    # export or something they pasted out of a forum post has submitted rule material
+    # just as much as someone with a scanned manual, and pushing it through a PDF
+    # reader would only fail with a confusing error about a missing header.
+    if path.suffix.lower() in TEXT_SUFFIXES:
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            raise IngestError(f"cannot read {path} as text: {exc}") from exc
+        if not text.strip():
+            raise IngestError(f"{path} is empty")
+        return Material(source=str(path), text=text)
+
+    text = pdf_text(path)
+    if len(text) >= MIN_TEXT_CHARS:
+        return Material(source=str(path), text=text)
+
+    try:
+        pages = pdf_page_images(path)
+    except IngestError as exc:
+        raise IngestError(
+            f"{path} has no usable text layer ({len(text)} characters) and no "
+            f"extractable page images. {exc}"
+        ) from exc
+    return Material(source=str(path), pages=pages)

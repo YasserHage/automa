@@ -47,6 +47,10 @@ ALLOWED_IMPORTS: frozenset[str] = frozenset(
         "functools",
         "operator",
         "string",
+        # Modules read what a person typed at the table - "1/5", "salmon_nigiri" - and
+        # matching those onto a component table is what `re` is for. Pure computation:
+        # it reaches no file, socket or process, which is the line this list draws.
+        "re",
         "__future__",
         "automa.core.game",
     }

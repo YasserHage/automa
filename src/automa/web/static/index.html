@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Automa</title>
+<!--
+  Theme is applied before the stylesheet loads, or the page flashes the wrong one.
+  Inline and synchronous on purpose - a deferred module would be too late.
+-->
+<script>
+  (function () {
+    try {
+      var saved = localStorage.getItem("automa-theme");
+      if (saved === "dark" || saved === "light") {
+        document.documentElement.setAttribute("data-theme", saved);
+      }
+    } catch (e) { /* private mode: fall through to the system preference */ }
+  })();
+</script>
+<link rel="stylesheet" href="/css/tokens.css">
+<link rel="stylesheet" href="/css/base.css">
+<link rel="stylesheet" href="/css/components.css">
+</head>
+<body>
+<div class="app">
+  <header class="topbar">
+    <div class="brand">
+      Automa
+      <span class="tagline">your opponent at the table</span>
+    </div>
+    <nav class="nav" id="nav" aria-label="Main">
+      <a href="#/games">Games</a>
+      <a href="#/play">Play</a>
+      <a href="#/compile">Add a game</a>
+    </nav>
+    <div class="theme-toggle" role="group" aria-label="Colour theme">
+      <button type="button" data-theme-choice="system">System</button>
+      <button type="button" data-theme-choice="light">Light</button>
+      <button type="button" data-theme-choice="dark">Dark</button>
+    </div>
+  </header>
+
+  <main id="root" class="screen"></main>
+</div>
+
+<script type="module" src="/js/main.js"></script>
+</body>
+</html>

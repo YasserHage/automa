@@ -66,6 +66,71 @@ PLY = "ply"
 #: Games that need no sub-decisions simply omit the key.
 PENDING = "pending"
 
+#: Optional. When present and not ``None``, the module is missing information that only
+#: the physical table has - what a just-revealed card actually does, what was drawn, what
+#: a die showed - and cannot proceed until someone supplies it. The value is a dict
+#: carrying at least ``kind`` and ``prompt``.
+#:
+#: Deliberately distinct from :data:`PENDING`. A pending decision is a *choice* among
+#: options the module can enumerate; an unknown is a *fact* the module does not have and
+#: cannot derive. Supplying a fact is neither a decision nor a corrective intervention,
+#: and counting it as either would corrupt the primary metric.
+UNKNOWN = "unknown"
+
+#: Marker on an answer to :data:`UNKNOWN` meaning the table could not supply the fact.
+#:
+#: Every source of information can fail: the person does not remember what was drawn,
+#: cannot describe what a card does, or describes something the effect vocabulary cannot
+#: express. So "unavailable" is not an error path - it is an ordinary answer, and a
+#: module that only handles answers which arrive is a module that stalls at the table.
+#: ``resolve_unknown`` must accept it, clear the ``unknown`` it declared, record that the
+#: question was asked so nobody is asked twice, and carry on without the fact.
+#:
+#: It is also what makes such a game validatable offline: the self-play harness has no
+#: person to ask, so it answers every question this way. A module that cannot proceed
+#: without an answer cannot be self-played, and would reach the table unvalidated.
+UNAVAILABLE = "unavailable"
+
+
+# -- the two kinds of question a module may ask ----------------------------
+#
+# Both are facts the table has and the module cannot derive, and both travel the same
+# way: the module sets :data:`UNKNOWN`, the core relays it to an informant, the answer
+# comes back to ``resolve_unknown``. What differs is what is being asked for.
+
+#: What a card *does*. Answered from the catalog where possible, from the person
+#: otherwise, and structured into vocabulary operations before it reaches the module.
+KIND_CARD_EFFECT = "card_effect"
+
+#: *Which* components are where - the cards actually dealt to a hand, the card just
+#: drawn, the face a die showed. This is what makes a match a game played with the
+#: physical deck rather than a simulation of one: the module declares the group it is
+#: missing and the person reads it off the table.
+#:
+#: The answer is a list of plain strings and nothing more. Nobody between the person and
+#: the module interprets them - the informant counts them, the module gives them meaning
+#: - which is what keeps the core and the informant generic across games nobody has
+#: written yet.
+KIND_COMPONENTS = "components"
+
+#: On a :data:`KIND_COMPONENTS` question: which group is being asked about. Echoed back
+#: in the answer, so a module with several outstanding questions can tell them apart.
+SLOT = "slot"
+
+#: On a :data:`KIND_COMPONENTS` question: how many components are expected. This is the
+#: whole of the validation a supplied answer gets - the right *number* of cards, never
+#: the right names. A name the module does not recognise is a card nobody has described
+#: yet, which is a question, not an error.
+COUNT = "count"
+
+#: OPTIONAL on a :data:`KIND_COMPONENTS` question: component names the module knows,
+#: shown to the person as a hint. Never a filter: rejecting a name that is not on the
+#: list would break exactly the unfamiliar-game case this product exists for.
+OPTIONS = "options"
+
+#: On an answer to a :data:`KIND_COMPONENTS` question: the components, as strings.
+COMPONENTS = "components"
+
 #: Present on every action: a one-line human-readable rendering. The tactician sees
 #: these strings and returns an index, so an action that reads ambiguously is a
 #: decision-quality bug even when the mechanics are right.
@@ -85,6 +150,75 @@ class Viewer(StrEnum):
     PUBLIC = "public"
     AUTOMA = "automa"
     HUMAN = "human"
+
+
+#: Fields that describe the *question* rather than identify it: what was asked, how it
+#: was phrased, how many things it wanted, what names it would recognise. An answer
+#: echoes everything else back, so a module holding several questions can tell which one
+#: it is being answered.
+_QUESTION_FIELDS: frozenset[str] = frozenset({"kind", "prompt", COUNT, OPTIONS})
+
+
+def identifying(unknown: dict[str, Any]) -> dict[str, Any]:
+    """The fields an answer echoes back, whatever else it carries.
+
+    Defined once so the two possible answers to one question - the fact, and "nobody
+    could say" - are distinguishable by what they carry and never by which of them the
+    module can recognise.
+    """
+    return {k: v for k, v in unknown.items() if k not in _QUESTION_FIELDS}
+
+
+def unavailable_answer(unknown: dict[str, Any]) -> dict[str, Any]:
+    """The answer to :data:`UNKNOWN` that is available for every question in every game.
+
+    The question's own identifying fields are echoed back, so a module can tell which of
+    several outstanding questions this answers, and every field that would carry a
+    *value* is simply absent - a module reading one with ``.get()`` sees ``None``.
+
+    Defined once here because three places need exactly this and must not drift: random
+    self-play, which has nobody to ask; an unattended match; and a person at the table
+    who cannot say. They are the same answer, and a module only has to handle it once.
+    """
+    return {**identifying(unknown), UNAVAILABLE: True}
+
+
+#: How many questions one state may ask before something is looping. Mirrors
+#: ``match.MAX_UNKNOWNS_PER_TURN``: answering one can legitimately reveal another - a
+#: hand supplied at the table can contain two cards nobody has described - but not
+#: endlessly.
+MAX_UNKNOWNS = 8
+
+
+def settle(module: ModuleType, state: State) -> State:
+    """Answer every question ``state`` declares with :func:`unavailable_answer`.
+
+    What a caller with nobody to ask does with a fresh state. Modules now ask for the
+    components on the table from the deal onwards, so ``initial_state`` routinely returns
+    a state that is *waiting*, and ``legal_actions`` must never be called on one of those.
+    Every offline caller - the fingerprint, the baseline's action-shape probe, the eval
+    battery - needs the same three lines, so they live here once.
+
+    The match loop and the self-play harness do not use this: they resolve the same way
+    but have their own logging and checking to do at each step.
+    """
+    for _ in range(MAX_UNKNOWNS):
+        if not isinstance(state, dict):
+            return state
+        unknown = state.get(UNKNOWN)
+        if not unknown:
+            return state
+        resolve = getattr(module, "resolve_unknown", None)
+        if resolve is None:
+            raise ValueError(
+                f"{getattr(module, 'NAME', module)} set {UNKNOWN!r} but has no "
+                "resolve_unknown, so an answer would have nowhere to go"
+            )
+        state = resolve(state, unavailable_answer(unknown))
+    raise ValueError(
+        f"{getattr(module, 'NAME', module)} still reports missing information after "
+        f"{MAX_UNKNOWNS} answers; resolve_unknown is not clearing what it declared"
+    )
 
 
 def viewer_player(viewer: Viewer) -> Player | None:
@@ -112,6 +246,13 @@ class GameModule(Protocol):
         Seeding is what lets Phase 3 build reproducible fixtures, and it lets any
         shuffling happen once here rather than being threaded through ``apply`` -
         which is what keeps ``apply`` a pure function.
+
+        A game played with physical components does not deal them here: it declares a
+        :data:`KIND_COMPONENTS` question and lets the table say what was dealt. The
+        seeded shuffle is what it falls back to when the answer is :data:`UNAVAILABLE`,
+        which is what keeps such a game playable offline and validatable by self-play.
+        So the state this returns may legitimately be one that is still waiting, and
+        callers must :func:`settle` it before asking for legal actions.
         """
 
     @staticmethod
@@ -150,6 +291,11 @@ class GameModule(Protocol):
         The core cannot know generically that a game conserves its components, so
         the module declares it. plan.md requires the harness to catch conservation
         violations; this is how it learns what conservation means for this game.
+
+        A state carrying :data:`UNKNOWN` is **sound, not broken**: components that have
+        not been supplied yet are missing on purpose. Self-play checks a fresh state
+        before it answers anything, so a module that counts its deck unconditionally
+        would report its own undealt opening as a violation.
         """
 
 
@@ -163,7 +309,17 @@ _REQUIRED: dict[str, int] = {
     "describe_state": 2,
 }
 
-_OPTIONAL: dict[str, int] = {"check_invariants": 1}
+#: Optional members. Deliberately *not* declared in the Protocol body: it is
+#: ``runtime_checkable``, so ``isinstance`` demands every member it lists, and an
+#: optional method there would make conformance fail for every game that does not need
+#: it. Listing them here keeps them arity-checked when present and absent otherwise.
+#:
+#: ``resolve_unknown(state, answer) -> State`` folds an answer to :data:`UNKNOWN` back
+#: into the state. The core obtains the answer - from a person, structured by an agent -
+#: and the *module* applies it, which is what preserves invariant 2: a model produced
+#: data, the module wrote the state. A game that never lacks information omits it.
+#: The answer may carry :data:`UNAVAILABLE`, and handling that case is not optional.
+_OPTIONAL: dict[str, int] = {"check_invariants": 1, "resolve_unknown": 2}
 
 
 def _arity_problem(name: str, fn: Any, wanted: int) -> str | None:

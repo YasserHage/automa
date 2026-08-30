@@ -49,14 +49,21 @@ in Phase 5 instead.
 from __future__ import annotations
 
 import random
+import re
 from itertools import combinations
 
 from automa.core.game import (
+    COMPONENTS,
+    COUNT,
     DEFAULT_PLAYERS,
+    KIND_COMPONENTS,
     LABEL,
     PLY,
+    SLOT,
     TO_PLAY,
     TURN,
+    UNAVAILABLE,
+    UNKNOWN,
     Action,
     Player,
     State,
@@ -139,22 +146,178 @@ def _deal(seed: int, round_no: int) -> dict[Player, list[dict]]:
     return {PLAYERS[0]: cards[:half], PLAYERS[1]: cards[half:]}
 
 
-def _start_round(state: State, round_no: int) -> State:
-    """Deal a round and seat the opening turn."""
-    hands = _deal(state["seed"], round_no)
-    starter = next(p for p in PLAYERS if any(c["id"] == STAR_CARD_ID for c in hands[p]))
+#: Cards dealt to each player. The whole deck goes out, halved.
+HAND_SIZE = len(DECK) // 2
+
+#: The groups the table supplies at the start of a round, in the order they are asked
+#: for. A slot is named ``hands.<player>`` so an answer identifies itself.
+_DEAL_SLOTS: tuple[str, ...] = tuple(f"hands.{p}" for p in PLAYERS)
+
+
+def _deal_question(state: State, slot: str) -> dict:
+    """Ask the table for one hand.
+
+    Both hands are asked for, Automa's included. Somebody has to read the physical
+    cards, and it is the person sitting there - Automa cannot see the table. That they
+    learn Automa's opening hand is a consequence of playing with real cards rather than
+    a leak: the interface still shows each hand only to its owner from then on.
+    """
+    player = slot.split(".", 1)[1]
+    whose = "Automa's" if player == PLAYERS[0] else "your"
     return {
+        "kind": KIND_COMPONENTS,
+        SLOT: slot,
+        "round": state["round"],
+        COUNT: HAND_SIZE,
+        "prompt": (
+            f"Round {state['round']}: read out {whose} {HAND_SIZE} cards as "
+            "active/inactive pairs - the upright value first, then the one at the other "
+            "end, e.g. 1/5 2/9. Order does not matter."
+        ),
+    }
+
+
+def _start_round(state: State, round_no: int) -> State:
+    """Seat a round and ask the table what was dealt.
+
+    No longer deals: the cards are the physical ones in front of the person, and
+    inventing a hand here would mean Automa playing cards nobody is holding. The seeded
+    shuffle survives as the fallback in :func:`resolve_unknown` for when there is nobody
+    to ask - an unattended match, and every self-play playout.
+    """
+    seated = {
         **state,
-        TO_PLAY: starter,
         "round": round_no,
         # The opening exception: the starter takes one turn, in their second area.
         # Expressing it as a starting seat rather than a special case works because
         # the seat after (player, area 2) is always (opponent, area 1).
         "area": 1,
-        "hands": hands,
+        "hands": {p: [] for p in PLAYERS},
         "areas": {p: [[] for _ in range(AREAS)] for p in PLAYERS},
         "discard": [],
+        "awaiting": list(_DEAL_SLOTS),
     }
+    return _ask_for_the_deal(seated)
+
+
+def _ask_for_the_deal(state: State) -> State:
+    """Declare the next outstanding hand, or seat the opener once both are in.
+
+    ``awaiting`` is tracked explicitly rather than inferred from an empty hand, because
+    an empty hand is also how a round is *won* - the two states are indistinguishable
+    from the cards alone.
+    """
+    settled = {k: v for k, v in state.items() if k != UNKNOWN}
+    if state["awaiting"]:
+        return {**settled, UNKNOWN: _deal_question(state, state["awaiting"][0])}
+
+    starter = next(
+        (p for p in PLAYERS if any(c["id"] == STAR_CARD_ID for c in state["hands"][p])),
+        # Only reachable if the star card was mistyped or never entered. Somebody has to
+        # open the round, and refusing to start would be a worse answer than a default.
+        PLAYERS[0],
+    )
+    return {**settled, TO_PLAY: starter}
+
+
+def _parse_card(token: str) -> tuple[int, int] | None:
+    """``"1/5"`` -> ``(1, 5)``. Any non-digit run separates the two values."""
+    match = re.fullmatch(r"(\d+)\D+(\d+)", token.strip())
+    if match is None:
+        return None
+    return int(match.group(1)), int(match.group(2))
+
+
+def _read_hand(tokens: list[str], taken: set[int]) -> list[dict]:
+    """Turn what the person typed into cards, matching each onto the printed deck.
+
+    A token is matched to any unused card printed with those two values, in either
+    orientation - which is what identifies it, since orientation is what the person is
+    reporting. Duplicated pairs are interchangeable, so the first free one will do.
+
+    A token matching nothing printed is kept anyway, under an id of its own past the end
+    of the deck. Rejecting it would be the wrong trade: the count is the only validation
+    a supplied deal gets, and a mistyped card is caught downstream by
+    :func:`check_invariants`, where it is reported as the conservation problem it is
+    rather than raised in the middle of a deal.
+    """
+    used = set(taken)
+    cards: list[dict] = []
+    for token in tokens:
+        pair = _parse_card(token)
+        match = None
+        if pair is not None:
+            match = next(
+                (
+                    card_id
+                    for card_id, printed in enumerate(DECK)
+                    if card_id not in used and sorted(printed) == sorted(pair)
+                ),
+                None,
+            )
+        if match is None:
+            card = {"id": len(DECK) + len(used), "up": 0, "down": 0, "typed": token}
+            if pair is not None:
+                card["up"], card["down"] = pair
+        else:
+            card = {"id": match, "up": pair[0], "down": pair[1]}
+        used.add(card["id"])
+        cards.append(card)
+    return cards
+
+
+def _fallback_hand(state: State, player: Player, taken: set[int]) -> list[dict]:
+    """The hand to play with when nobody could say what was dealt.
+
+    With nothing supplied this is exactly the seeded deal that used to happen in
+    ``_start_round``, unchanged - which is what keeps self-play, the fingerprint and the
+    eval battery reproducing the same positions they always did. Once one hand *has*
+    been supplied, the seeded half would collide with it, so what is left of the deck is
+    dealt instead.
+    """
+    seeded = _deal(state["seed"], state["round"])[player]
+    if not any(card["id"] in taken for card in seeded):
+        return seeded
+
+    rng = random.Random(f"dnup-{state['seed']}-{state['round']}-{player}-rest")
+    rest = []
+    for card_id, (a, b) in enumerate(DECK):
+        if card_id in taken:
+            continue
+        up, down = (a, b) if rng.random() < 0.5 else (b, a)
+        rest.append({"id": card_id, "up": up, "down": down})
+    rng.shuffle(rest)
+    return rest[:HAND_SIZE]
+
+
+def resolve_unknown(state: State, answer: dict) -> State:
+    """Fold a supplied hand into the state, then ask for the next one.
+
+    Advances neither ``turn`` nor ``ply``: being told what was dealt is not a turn.
+    """
+    slot = answer.get(SLOT)
+    awaiting = list(state.get("awaiting", []))
+    if slot not in awaiting:
+        # An answer to a question this state is not asking. Clearing the unknown is the
+        # one thing that must happen regardless, or the match asks forever.
+        return _ask_for_the_deal(state)
+
+    player = slot.split(".", 1)[1]
+    taken = {card["id"] for p in PLAYERS for card in state["hands"][p]}
+    components = answer.get(COMPONENTS)
+    if answer.get(UNAVAILABLE) or not components:
+        hand = _fallback_hand(state, player, taken)
+    else:
+        hand = _read_hand(list(components), taken)
+
+    awaiting.remove(slot)
+    return _ask_for_the_deal(
+        {
+            **state,
+            "hands": {**state["hands"], player: hand},
+            "awaiting": awaiting,
+        }
+    )
 
 
 def initial_state(seed: int | None = None) -> State:
@@ -169,6 +332,7 @@ def initial_state(seed: int | None = None) -> State:
         "hands": {p: [] for p in PLAYERS},
         "areas": {p: [[] for _ in range(AREAS)] for p in PLAYERS},
         "discard": [],
+        "awaiting": [],
     }
     return _start_round(base, 1)
 
@@ -207,6 +371,8 @@ def _rotated(card: dict) -> dict:
 
 
 def _card_str(card: dict) -> str:
+    if "typed" in card and card["up"] == 0:
+        return f"?{card['typed']}?"
     return f"{card['up']}({card['down']})"
 
 
@@ -488,10 +654,11 @@ def winner(state: State) -> Player | None:
 def describe_state(state: State, viewer: Viewer) -> str:
     """Render the table for one viewer.
 
-    Automa's hand is shown to everyone - that is a locked decision, taken so the
-    person at the table can audit every move against physical cards. The human's
-    hand is shown only to the human, and the seed never appears at all: the deal is
-    derived from it, so printing it would hand over the opponent's cards.
+    Each hand is shown only to its owner, Automa's included, and the seed never appears
+    at all: a fallback deal is derived from it, so printing it would hand over the
+    opponent's cards. The person does read Automa's opening hand off the physical table
+    when they enter it - somebody has to - but that is one moment at the deal, not a
+    running display of what Automa holds.
     """
     lines = [
         f"DNUP - round {state['round']}, turn {state[TURN]}. "
@@ -511,9 +678,11 @@ def describe_state(state: State, viewer: Viewer) -> str:
         )
 
     lines.append("")
+    if state.get("awaiting"):
+        lines.append("Waiting for the cards on the table to be read out.")
     for player in PLAYERS:
         count = len(state["hands"][player])
-        if player == PLAYERS[0] or viewer_player(viewer) == player:
+        if viewer_player(viewer) == player:
             lines.append(f"{player}'s hand ({count}): {_cards_str(state['hands'][player])}")
         else:
             lines.append(f"{player}'s hand: {count} card(s), values hidden")
@@ -523,6 +692,12 @@ def describe_state(state: State, viewer: Viewer) -> str:
 
 def check_invariants(state: State) -> list[str]:
     problems: list[str] = []
+
+    if state.get(UNKNOWN) or state.get("awaiting"):
+        # A round waiting on its deal is sound, not broken: the cards are on the table
+        # and have not been read out yet. Counting them now would report the module's
+        # own opening as a conservation failure.
+        return problems
 
     if state["area"] not in range(AREAS):
         problems.append(f"area {state['area']!r} is not one of {list(range(AREAS))}")
@@ -546,6 +721,15 @@ def check_invariants(state: State) -> list[str]:
             + (f"; duplicated {extra}" if extra else "")
         )
     for card in seen:
+        if card["id"] >= len(DECK):
+            # Only reachable from a deal read out at the table: something was typed that
+            # is not a card in this deck. Reported rather than raised, so a mistyped
+            # card shows up as the conservation problem it is and the person can see it.
+            problems.append(
+                f"{card.get('typed', _card_str(card))!r} was entered but is not a card "
+                "in this deck"
+            )
+            continue
         if tuple(sorted((card["up"], card["down"]))) != tuple(sorted(DECK[card["id"]])):
             problems.append(
                 f"card {card['id']} shows {_card_str(card)} but was printed "

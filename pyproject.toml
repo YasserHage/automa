@@ -13,7 +13,14 @@ dependencies = [
     "anthropic==1.2.0",
     "google-genai==2.20.0",
     "pydantic==2.13.5",
+    "pypdf==6.4.0",
     "python-dotenv==1.2.3",
+    # Web UI (additional surface; see CLAUDE.md "web/" section). Bare `uvicorn`
+    # deliberately, not `uvicorn[standard]`: that pulls in uvloop (no Windows wheel),
+    # httptools and watchfiles, none of which the SSE-based server needs.
+    "fastapi==0.118.0",
+    "uvicorn==0.34.3",
+    "python-multipart==0.0.20",
 ]
 
 [project.optional-dependencies]
@@ -26,12 +33,17 @@ dev = [
 automa-hello = "automa.scripts.hello_llm:main"
 automa-show = "automa.trajectory.show:main"
 automa-compile = "automa.scripts.compile_game:main"
+automa-catalog = "automa.scripts.build_catalog:main"
 automa-eval = "automa.eval.run:main"
 automa-play = "automa.scripts.play:main"
 automa-validate = "automa.scripts.validate_games:main"
+automa-web = "automa.scripts.web:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+"automa.web" = ["static/**/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -48,3 +60,9 @@ extend-exclude = ["src/automa/games/*_compiled.py"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.per-file-ignores]
+# FastAPI's dependency-injection idiom is `param: X = Depends(...)` / `= File(...)`,
+# a function call in a default argument by design - not the mutable-default bug B008
+# exists to catch.
+"src/automa/web/routes/*.py" = ["B008"]

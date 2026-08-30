@@ -25,13 +25,27 @@ from dataclasses import asdict, dataclass, field
 from types import ModuleType
 from typing import Any
 
-from automa.core.game import CORE_KEYS, LABEL, PENDING, PLY, TO_PLAY, TURN, Viewer
+from automa.core.game import (
+    CORE_KEYS,
+    LABEL,
+    PENDING,
+    PLY,
+    TO_PLAY,
+    TURN,
+    UNKNOWN,
+    Viewer,
+    unavailable_answer,
+)
 
 #: Generous by design. A game whose rules impose no bound on match length - DNUP is
 #: one - terminates almost surely under random play but has no proven ceiling, so
 #: this is a real stopping rule and not only a guard against a bug. Matches that hit
 #: it are reported as `aborted` rather than silently dropped.
 DEFAULT_MAX_PLIES = 1000
+
+
+class _Stalled(Exception):
+    """A module that cannot take another step. Internal: the violation is already logged."""
 
 
 @dataclass(frozen=True)
@@ -55,6 +69,8 @@ class PlayoutResult:
     outcome: str  # "terminal" | "aborted" | "error"
     winner: str | None
     violations: tuple[Violation, ...] = ()
+    #: How many times the module declared missing information during this match.
+    unknowns: int = 0
 
     @property
     def ok(self) -> bool:
@@ -73,6 +89,10 @@ class ValidationReport:
     ply_min: int = 0
     ply_median: float = 0.0
     ply_max: int = 0
+    #: Questions the module asked across every match. Evidence for the Phase 5 claim
+    #: that a populated catalog asks fewer than an empty one, and a signal in its own
+    #: right: a game that declares no unknowns is not exercising that path at all.
+    unknowns: int = 0
     violations: list[Violation] = field(default_factory=list)
 
     @property
@@ -97,6 +117,8 @@ class ValidationReport:
             f"plies min/median/max {self.ply_min}/{self.ply_median:g}/{self.ply_max}",
             f"      outcomes {self.outcomes}  winners {self.winners}",
         ]
+        if self.unknowns:
+            parts.append(f"      {self.unknowns} question(s) asked, all answered 'unavailable'")
         if self.violations:
             parts.append(f"      {len(self.violations)} violation(s):")
             parts += [f"        {v}" for v in self.violations[:10]]
@@ -194,6 +216,72 @@ def _check_views(module: ModuleType, state: Any, record: Any, ply: int) -> None:
             )
 
 
+#: How many unknowns one step may declare before the harness calls it a loop. Mirrors
+#: ``match.MAX_UNKNOWNS_PER_TURN``: answering one question can legitimately reveal
+#: another, but not forever.
+MAX_UNKNOWNS_PER_STEP = 8
+
+
+def _resolve_unknowns(
+    module: ModuleType, state: Any, record: Any, ply: int
+) -> tuple[Any, int, bool]:
+    """Close every gap the module declares, as ``match.play_match`` does before a turn.
+
+    Without this a module that correctly declares missing information deadlocks under
+    self-play: ``legal_actions`` is asked for moves in a state the module has said it
+    cannot proceed from. The first compiled Sushi Go modules invented a no-op "wait"
+    action to escape that, which then could not advance ``ply`` - a defect the harness
+    caused rather than found.
+
+    Returns the state, how many questions were answered, and whether to keep playing.
+    """
+    asked = 0
+    for _ in range(MAX_UNKNOWNS_PER_STEP):
+        if not isinstance(state, dict):
+            return state, asked, True
+        unknown = state.get(UNKNOWN)
+        if not unknown:
+            return state, asked, True
+        if not isinstance(unknown, dict) or "prompt" not in unknown or "kind" not in unknown:
+            record(
+                "unknown_is_well_formed",
+                f"{UNKNOWN!r} must be a dict carrying 'kind' and 'prompt': {unknown!r}",
+                ply,
+            )
+            return state, asked, False
+
+        resolve = getattr(module, "resolve_unknown", None)
+        if resolve is None:
+            record(
+                "declaring_an_unknown_requires_resolve_unknown",
+                f"state set {UNKNOWN!r} ({unknown.get('kind')}) but the module has no "
+                "resolve_unknown, so an answer would have nowhere to go",
+                ply,
+            )
+            return state, asked, False
+
+        before = state
+        state = resolve(state, unavailable_answer(unknown))
+        asked += 1
+        _check_state(module, state, record, ply)
+        if isinstance(state, dict) and isinstance(before, dict):
+            for key in (PLY, TURN):
+                if not _monotone(state.get(key), before.get(key)):
+                    record(
+                        "resolving_an_unknown_does_not_rewind_the_clock",
+                        f"{key} went {before.get(key)!r} -> {state.get(key)!r} while "
+                        "answering a question",
+                        ply,
+                    )
+
+    record(
+        "resolve_unknown_clears_what_it_answers",
+        f"still missing information after {MAX_UNKNOWNS_PER_STEP} answers on one step",
+        ply,
+    )
+    return state, asked, False
+
+
 #: How often to render the state during a playout. Every ply would triple the cost of
 #: validation to re-check something that rarely varies; never would have missed the bug
 #: that put this here. Periodic catches breakage that only appears once the board fills.
@@ -216,11 +304,18 @@ def random_playout(
     state: Any = None
     outcome = "terminal"
     winner: str | None = None
+    unknowns = 0
 
     try:
         state = module.initial_state(seed)
         _check_state(module, state, record, ply)
+        # Before the views: a module may legitimately be missing information from the
+        # deal onwards, and describe_state has to render that state too.
+        state, asked, proceed = _resolve_unknowns(module, state, record, ply)
+        unknowns += asked
         _check_views(module, state, record, ply)
+        if not proceed:
+            raise _Stalled
 
         while ply < max_plies:
             if module.is_terminal(state):
@@ -280,8 +375,15 @@ def random_playout(
 
             state = new_state
             ply += 1
+            # Answering happens between actions, exactly where play_match does it, so
+            # legal_actions is never asked for moves in a state the module has said it
+            # cannot proceed from.
+            state, asked, proceed = _resolve_unknowns(module, state, record, ply)
+            unknowns += asked
             if ply % VIEW_CHECK_EVERY == 0:
                 _check_views(module, state, record, ply)
+            if not proceed:
+                raise _Stalled
         else:
             outcome = "aborted"
 
@@ -296,6 +398,10 @@ def random_playout(
                         f"{winner!r} is not one of {module.PLAYERS} and is not None",
                         ply,
                     )
+    except _Stalled:
+        # The violation is already recorded and reproducible; there is nothing further
+        # to learn from a match that cannot take another step.
+        outcome = "error"
     except Exception as exc:  # noqa: BLE001 - a module crash IS the finding
         record("no_exception_during_play", f"{type(exc).__name__}: {exc}", ply)
         record("no_exception_during_play_traceback", traceback.format_exc().strip(), ply)
@@ -309,6 +415,7 @@ def random_playout(
         outcome=outcome,
         winner=winner,
         violations=tuple(violations),
+        unknowns=unknowns,
     )
 
 
@@ -347,6 +454,7 @@ def validate_module(
         key = result.winner if result.winner is not None else ("draw" if result.ok else "-")
         report.winners[key] = report.winners.get(key, 0) + 1
         lengths.append(result.plies)
+        report.unknowns += result.unknowns
         for violation in result.violations:
             if len(report.violations) < max_violations:
                 report.violations.append(violation)

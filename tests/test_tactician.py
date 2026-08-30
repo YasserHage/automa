@@ -59,15 +59,15 @@ def events(path: Path) -> list[dict]:
 # -- the ordinary path -----------------------------------------------------
 
 
-def test_a_valid_index_is_played_with_its_justification(install_provider) -> None:
-    install_provider(ScriptedProvider(decision_response(2, "keeps the heaps uneven")))
+def test_a_valid_index_is_played(install_provider) -> None:
+    install_provider(ScriptedProvider(decision_response(2)))
     ctx, _ = nim_context()
 
     decision = tactician_decider()(ctx)
 
     assert decision.index == 2
-    assert decision.justification == "keeps the heaps uneven"
     assert not decision.fallback
+    assert decision.justification is None, "the tactician returns an index and nothing else"
 
 
 def test_the_prompt_carries_the_view_and_the_numbered_actions(install_provider) -> None:
@@ -99,7 +99,7 @@ def test_an_illegal_index_is_rejected_and_retried_with_the_reason(
     install_provider, tmp_path: Path
 ) -> None:
     provider = install_provider(
-        ScriptedProvider(decision_response(99), decision_response(1, "second thoughts"))
+        ScriptedProvider(decision_response(99), decision_response(1))
     )
     with TrajectoryWriter("tac", directory=tmp_path) as traj:
         ctx, _ = nim_context(traj)
@@ -169,15 +169,19 @@ def test_a_whole_match_runs_on_scripted_responses(install_provider, tmp_path: Pa
     assert result.outcome == "terminal"
     assert result.fallbacks[AUTOMA] == 0
 
-    # Every tactician decision is in the log with the justification beside it - the
-    # Phase 2 exit criterion, checked against the file rather than the screen.
+    # Every tactician decision is in the log - the Phase 2 exit criterion, checked
+    # against the file rather than the screen. What makes a decision auditable is not a
+    # sentence the model wrote about it but the record of what it was shown and what it
+    # returned: the prompt, the numbered actions, and the index chosen.
     applied = [
         e for e in events(path)
         if e["type"] == "core_event" and e.get("event") == "action_applied"
         and e["player"] == AUTOMA
     ]
     assert applied
-    assert all(e["justification"] for e in applied)
+    assert all(e.get("index") is not None for e in applied)
+    calls = [e for e in events(path) if e["type"] == "llm_call" and e["agent"] == "tactician"]
+    assert calls and all(e["messages"] for e in calls)
 
 
 def test_a_provider_outage_falls_back_instead_of_killing_the_match(

@@ -16,7 +16,13 @@ import pytest
 from automa.core.game import AUTOMA, HUMAN
 from automa.core.loader import load_game
 from automa.core.match import MatchAbandoned, TurnContext, play_match, random_decider, viewer_for
-from automa.scripts.play import announce, human_decider, paced
+from automa.scripts.play import (
+    announce,
+    ask_components_at_the_table,
+    human_decider,
+    paced,
+)
+from automa.table import Question, table_informant
 from automa.trajectory import TrajectoryWriter
 
 
@@ -102,14 +108,25 @@ def test_announce_narrates_only_automas_moves(capsys) -> None:
 
     ctx = context()
     human_ctx = TurnContext(**{**ctx.__dict__, "player": HUMAN})
-    announce(human_ctx, Decision(index=0, justification="mine"), ctx.actions[0])
+    announce(human_ctx, Decision(index=0), ctx.actions[0])
     assert capsys.readouterr().out == ""
 
     automa_ctx = TurnContext(**{**ctx.__dict__, "player": AUTOMA})
-    announce(automa_ctx, Decision(index=0, justification="keeps it even"), ctx.actions[0])
+    announce(automa_ctx, Decision(index=0), ctx.actions[0])
     out = capsys.readouterr().out
     assert ctx.actions[0]["label"] in out
-    assert "keeps it even" in out
+    assert "because" not in out, "the tactician no longer explains itself"
+
+
+def test_announce_flags_a_fallback_move(capsys) -> None:
+    """A random substitution must not read as a decision the model made."""
+    from automa.core.match import Decision
+
+    ctx = context()
+    automa_ctx = TurnContext(**{**ctx.__dict__, "player": AUTOMA})
+    announce(automa_ctx, Decision(index=0, fallback=True), ctx.actions[0])
+    out = capsys.readouterr().out
+    assert "could not be reached" in out and "at random" in out
 
 
 def test_pacing_wraps_a_decider_without_changing_its_answer(monkeypatch) -> None:
@@ -136,3 +153,63 @@ def test_a_human_can_play_a_whole_match_from_piped_input(monkeypatch, capsys) ->
     )
     assert result.outcome == "terminal"
     assert result.winner in game.PLAYERS
+
+
+# -- reading the cards off the table ---------------------------------------
+#
+# The default way a match now starts. No model is involved on this path, so it can be
+# driven end to end from a scripted keyboard.
+
+
+def test_the_question_reaches_the_person_with_the_count_and_the_hint(monkeypatch, capsys) -> None:
+    typing(monkeypatch, "1/5 2/9")
+    answer = ask_components_at_the_table(
+        Question(prompt="read out two cards", count=2, options=("tempura", "wasabi"))
+    )
+    out = capsys.readouterr().out
+
+    assert answer == "1/5 2/9"
+    assert "read out two cards" in out
+    assert "tempura" in out
+    assert "not counted against you" in out, "supplying a fact is not a correction"
+
+
+def test_a_miscount_is_explained_before_being_asked_again(monkeypatch, capsys) -> None:
+    typing(monkeypatch, "1/5")
+    ask_components_at_the_table(Question(prompt="two please", count=2, note="that was 1"))
+    assert "that was 1" in capsys.readouterr().out
+
+
+def test_pressing_enter_is_taken_as_cannot_say(monkeypatch) -> None:
+    typing(monkeypatch, "   ")
+    assert ask_components_at_the_table(Question(prompt="anything?", count=3)) is None
+
+
+def test_a_closed_terminal_does_not_crash_the_deal(monkeypatch) -> None:
+    monkeypatch.setattr("builtins.input", _raise_eof)
+    assert ask_components_at_the_table(Question(prompt="anything?", count=3)) is None
+
+
+def _raise_eof(_prompt: str = "") -> str:
+    raise EOFError
+
+
+def test_a_dealt_hand_typed_at_the_keyboard_reaches_the_module(monkeypatch, capsys) -> None:
+    """End to end: the keyboard, the informant, the module, the match loop."""
+    dnup = load_game("dnup")
+    hands = [
+        " ".join(f"{c['up']}/{c['down']}" for c in dnup._deal(55, 1)[p]) for p in dnup.PLAYERS
+    ]
+    queue = list(hands) + [""] * 20  # later rounds: nobody says, the module deals its own
+    monkeypatch.setattr("builtins.input", lambda _prompt="": queue.pop(0))
+
+    result = play_match(
+        dnup,
+        {p: random_decider(2) for p in dnup.PLAYERS},
+        seed=6,
+        informant=table_informant(ask_components_at_the_table),
+        max_plies=400,
+    )
+    assert result.outcome == "terminal"
+    assert result.informed >= 2
+    assert sum(result.interventions.values()) == 0

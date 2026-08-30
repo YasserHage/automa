@@ -28,7 +28,7 @@ import random
 from dataclasses import dataclass, field
 from typing import Any
 
-from automa.core.game import TO_PLAY, TURN
+from automa.core.game import TO_PLAY, TURN, settle
 from automa.core.loader import load_game
 
 #: What each category is testing, and where it departs from `plan.md`.
@@ -113,7 +113,7 @@ def resolve(case: Case) -> ResolvedCase:
     is what lets the baseline and the agent be asked precisely the same question.
     """
     game = load_game(case.game)
-    state = game.initial_state(case.seed)
+    state = settle(game, game.initial_state(case.seed))
     rng = random.Random(f"case-{case.seed}")
 
     for _ in range(case.ply):

@@ -16,7 +16,7 @@ from types import ModuleType
 
 import pytest
 
-from automa.core.game import AUTOMA, HUMAN, Viewer
+from automa.core.game import AUTOMA, HUMAN, Viewer, settle
 from automa.core.loader import available_games, load_game
 from automa.games import dnup
 
@@ -30,14 +30,14 @@ def game(request: pytest.FixtureRequest) -> ModuleType:
 
 
 def test_every_viewer_gets_something_to_read(game: ModuleType) -> None:
-    state = game.initial_state(SEED)
+    state = settle(game, game.initial_state(SEED))
     for viewer in Viewer:
         assert game.describe_state(state, viewer).strip()
 
 
 def test_no_view_leaks_the_seed(game: ModuleType) -> None:
     """The deal is a function of the seed, so printing it would print the deal."""
-    state = game.initial_state(SEED)
+    state = settle(game, game.initial_state(SEED))
     for viewer in Viewer:
         assert str(SEED) not in game.describe_state(state, viewer)
 
@@ -45,7 +45,7 @@ def test_no_view_leaks_the_seed(game: ModuleType) -> None:
 def test_nim_shows_everyone_the_same_thing() -> None:
     """Perfect information, and the test says so rather than leaving it implied."""
     nim = load_game("nim")
-    state = nim.initial_state(SEED)
+    state = settle(nim, nim.initial_state(SEED))
     rendered = {nim.describe_state(state, viewer) for viewer in Viewer}
     assert len(rendered) == 1
 
@@ -62,7 +62,7 @@ def _views(state: dict) -> dict[Viewer, str]:
 
 
 def test_the_humans_hand_is_visible_only_to_the_human() -> None:
-    state = dnup.initial_state(SEED)
+    state = settle(dnup, dnup.initial_state(SEED))
     views = _views(state)
 
     # A card's rendering could legitimately appear because an identical pair sits in
@@ -79,18 +79,27 @@ def test_the_humans_hand_is_visible_only_to_the_human() -> None:
 
 def test_the_public_view_still_says_how_many_cards_are_hidden() -> None:
     """Counts are public knowledge and deduction memory needs them; values are not."""
-    state = dnup.initial_state(SEED)
+    state = settle(dnup, dnup.initial_state(SEED))
     public = dnup.describe_state(state, Viewer.PUBLIC)
     assert "hidden" in public
     assert str(len(state["hands"][HUMAN])) in public
 
 
-def test_automas_hand_is_open_to_everyone() -> None:
-    state = dnup.initial_state(SEED)
+def test_each_hand_is_private_to_its_owner() -> None:
+    """Automa's hand used to be open to everyone; that decision was reversed.
+
+    The original reasoning was physical: the person at the table has to play Automa's
+    side, so they would see its cards anyway, and showing them made every move auditable.
+    In practice it hands the opponent perfect information and spoils the match, which is
+    a worse outcome than the auditability was worth. The trajectory still records every
+    state Automa saw, so a move remains auditable after the fact.
+    """
+    state = settle(dnup, dnup.initial_state(SEED))
     views = _views(state)
     for card in state["hands"][AUTOMA]:
-        for viewer in Viewer:
-            assert _card_text(card) in views[viewer], (card, viewer)
+        assert _card_text(card) in views[Viewer.AUTOMA], card
+        for viewer in (Viewer.PUBLIC, Viewer.HUMAN):
+            assert _card_text(card) not in views[viewer], (card, viewer)
 
 
 def test_cards_on_the_table_are_visible_to_everyone() -> None:

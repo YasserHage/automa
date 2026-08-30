@@ -20,7 +20,7 @@ import pytest
 from _providers import ScriptedProvider, structured_response
 
 from automa.contracts import BaselineMove
-from automa.core.game import AUTOMA
+from automa.core.game import AUTOMA, settle
 from automa.core.loader import load_game
 from automa.core.match import TurnContext, play_match, random_decider, viewer_for
 from automa.eval.baseline import action_format, baseline_decider, match_action, rules_brief
@@ -46,7 +46,7 @@ def raw(text: str) -> object:
 
 def nim_context(trajectory=None):
     game = load_game("nim")
-    state = game.initial_state(1)
+    state = settle(game, game.initial_state(1))
     player = state["to_play"]
     return TurnContext(
         game=game,
@@ -117,7 +117,7 @@ def test_a_legal_proposal_is_played(install_provider) -> None:
 def test_key_order_and_list_order_do_not_matter(install_provider) -> None:
     """Leniency runs in the baseline's favour, deliberately."""
     game = load_game("dnup")
-    state = game.initial_state(1)
+    state = settle(game, game.initial_state(1))
     actions = game.legal_actions(state)
     play = next(a for a in actions if a["kind"] == "play" and len(a["cards"]) > 1)
 
@@ -127,7 +127,7 @@ def test_key_order_and_list_order_do_not_matter(install_provider) -> None:
 
 def test_a_label_in_the_proposal_is_ignored(install_provider) -> None:
     game = load_game("nim")
-    actions = game.legal_actions(game.initial_state(1))
+    actions = game.legal_actions(settle(game, game.initial_state(1)))
     assert match_action({**actions[0], "label": "nonsense"}, actions) == 0
 
 
@@ -223,7 +223,7 @@ def test_interventions_are_counted_across_a_match(install_provider, tmp_path: Pa
 
 def test_a_clean_match_reports_no_interventions(install_provider, tmp_path: Path) -> None:
     game = load_game("nim")
-    state = game.initial_state(1)
+    state = settle(game, game.initial_state(1))
     first = game.legal_actions(state)[0]
     install_provider(ScriptedProvider(*[move({"heap": first["heap"], "count": 1})] * 60))
 

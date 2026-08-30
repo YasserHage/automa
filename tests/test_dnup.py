@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import pytest
 
-from automa.core.game import AUTOMA, HUMAN, PLY, TO_PLAY, TURN
+from automa.core.game import AUTOMA, HUMAN, PLY, TO_PLAY, TURN, UNKNOWN, settle
 from automa.core.selfplay import random_playout
 from automa.games import dnup
 
@@ -97,7 +97,7 @@ def test_deck_matches_the_physical_two_player_deck() -> None:
 
 
 def test_the_deal_splits_the_whole_deck_in_half() -> None:
-    state = dnup.initial_state(3)
+    state = settle(dnup, dnup.initial_state(3))
     assert len(state["hands"][AUTOMA]) == len(state["hands"][HUMAN]) == len(dnup.DECK) // 2
     assert dnup.check_invariants(state) == []
 
@@ -105,14 +105,14 @@ def test_the_deal_splits_the_whole_deck_in_half() -> None:
 def test_the_star_card_holder_opens_with_their_second_play_area() -> None:
     """The opening asymmetry is in the rules, not an artefact of the implementation."""
     for seed in range(20):
-        state = dnup.initial_state(seed)
+        state = settle(dnup, dnup.initial_state(seed))
         opener = state[TO_PLAY]
         assert any(c["id"] == dnup.STAR_CARD_ID for c in state["hands"][opener])
         assert state["area"] == 1
 
 
 def test_turn_order_runs_both_of_a_players_areas_before_the_opponents() -> None:
-    state = dnup.initial_state(1)
+    state = settle(dnup, dnup.initial_state(1))
     first = state[TO_PLAY]
     seats = [(state[TO_PLAY], state["area"])]
     for _ in range(4):
@@ -209,7 +209,7 @@ def test_added_cards_must_match_the_sets_value() -> None:
 
 def test_rotating_your_hand_is_always_available() -> None:
     """This is what guarantees a non-terminal state always offers a legal action."""
-    for state in (build(), build(automa_hand=((10, 3),)), dnup.initial_state(2)):
+    for state in (build(), build(automa_hand=((10, 3),)), settle(dnup, dnup.initial_state(2))):
         assert any(a["kind"] == "rotate" for a in dnup.legal_actions(state))
 
 
@@ -232,16 +232,26 @@ def test_a_played_set_survives_until_that_areas_turn_comes_round_again() -> None
     assert any(c["id"] == 10 for c in state["discard"])
 
 
-def test_emptying_your_hand_wins_the_round_and_the_next_one_is_dealt() -> None:
+def test_emptying_your_hand_wins_the_round_and_the_next_one_is_asked_for() -> None:
+    """A new round is not dealt by the module - it is read off the table."""
     state = build(automa_hand=((10, 3),), human_hand=((18, 3),))
     after = dnup.apply(state, plays(state)[0])
 
     assert after["rounds_won"][AUTOMA] == 1
     assert after["round"] == 2
     assert not dnup.is_terminal(after)
-    assert len(after["hands"][AUTOMA]) == len(after["hands"][HUMAN]) == len(dnup.DECK) // 2
     assert after["discard"] == [] and after["areas"][AUTOMA] == [[], []]
+
+    question = after[UNKNOWN]
+    assert question["kind"] == "components"
+    assert question["count"] == len(dnup.DECK) // 2
+    assert question["round"] == 2
+    # Waiting on the deal is a sound state, not a conservation failure.
     assert dnup.check_invariants(after) == []
+
+    dealt = settle(dnup, after)
+    assert len(dealt["hands"][AUTOMA]) == len(dealt["hands"][HUMAN]) == len(dnup.DECK) // 2
+    assert dnup.check_invariants(dealt) == []
 
 
 def test_a_second_round_win_ends_the_match() -> None:

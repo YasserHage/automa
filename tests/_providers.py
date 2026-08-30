@@ -23,7 +23,6 @@ class Decision(BaseModel):
     """Structurally what a Tactician returns, for tests that need no more than that."""
 
     action_index: int
-    justification: str
 
 
 class ScriptedProvider:
@@ -69,9 +68,6 @@ def structured_response(
     )
 
 
-def decision_response(index: int, justification: str | None = None) -> LLMResponse:
+def decision_response(index: int) -> LLMResponse:
     """A response choosing ``index``, whether or not that index is legal."""
-    return structured_response(
-        Decision(action_index=index, justification=justification or f"picked {index}"),
-        request_id=f"req_{index}",
-    )
+    return structured_response(Decision(action_index=index), request_id=f"req_{index}")

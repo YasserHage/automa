@@ -111,6 +111,13 @@ def main(argv: list[str] | None = None) -> int:
     return verdict(
         True, "passed", [],
         outcomes=report.outcomes,
+        # What the module calls itself. The installed filename is taken from this so
+        # that the loader name, NAME and the catalog filename cannot drift apart.
+        name=module.NAME,
+        # How many questions the module asked across validation. A catalog-driven game
+        # reporting zero has not exercised the path it was told to implement, which a
+        # reviewer should see even though it passes every gate.
+        unknowns=report.unknowns,
         fingerprint=fp.collect(module, matches=min(args.matches, 40)).to_dict(),
         state_keys=fp.state_key_report(module),
     )

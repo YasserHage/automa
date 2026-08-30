@@ -32,7 +32,7 @@ from pathlib import Path
 from typing import Any
 
 from automa.contracts import BaselineMove
-from automa.core.game import LABEL, action_shape
+from automa.core.game import LABEL, action_shape, settle
 from automa.core.match import Decision, TurnContext
 from automa.llm import call_llm
 from automa.llm.call import LLMCallError
@@ -91,7 +91,7 @@ def action_format(game_name: str) -> str:
     from automa.core.loader import load_game
 
     game = load_game(game_name)
-    state = game.initial_state(0)
+    state = settle(game, game.initial_state(0))
     rng = _random.Random("action-format")
 
     by_shape: dict[tuple[str, ...], dict[str, Any]] = {}
@@ -168,7 +168,7 @@ def _known_shapes(game_name: str) -> frozenset[tuple[tuple[str, str], ...]]:
     from automa.core.loader import load_game
 
     game = load_game(game_name)
-    state = game.initial_state(0)
+    state = settle(game, game.initial_state(0))
     rng = random.Random("action-format")
     shapes: set[tuple[tuple[str, str], ...]] = set()
     for _ in range(40):

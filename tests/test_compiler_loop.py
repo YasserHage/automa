@@ -16,7 +16,7 @@ import pytest
 from _providers import ScriptedProvider, structured_response
 
 from automa.compiler import generate
-from automa.compiler.ingest import PageImage
+from automa.compiler.ingest import Material, PageImage
 from automa.contracts import CompilerOutput
 from automa.trajectory import TrajectoryWriter
 
@@ -27,12 +27,16 @@ GOOD_SOURCE = Path("src/automa/games/nim.py").read_text(encoding="utf-8")
 @pytest.fixture(autouse=True)
 def fixed_model_and_material(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("AUTOMA_MODEL_COMPILER", MODEL)
-    # One tiny fake page: the ingestion path has its own tests, and a real PDF would
-    # make these slow for no extra coverage.
+    # One tiny fake page. Ingestion has its own tests, and a real PDF would make these
+    # slow for no extra coverage. Patched at `read_material` because that is the seam
+    # the compiler actually calls - it decides text-or-images from the file itself.
     monkeypatch.setattr(
         generate.ingest,
-        "pdf_page_images",
-        lambda path: [PageImage(object_id=1, data=b"\xff\xd8fake", mime_type="image/jpeg")],
+        "read_material",
+        lambda path: Material(
+            source=str(path),
+            pages=[PageImage(object_id=1, data=b"\xff\xd8fake", mime_type="image/jpeg")],
+        ),
     )
 
 
@@ -253,3 +257,102 @@ def test_a_module_is_accepted_without_anything_to_compare_it_to(
     assert result.ok
     assert "fingerprint" in result.report, "still measured, just not compared"
     assert "comparison" not in result.report, "nothing to compare against, and none needed"
+
+
+def test_text_material_is_sent_as_text_not_images(install_provider, tmp_path, monkeypatch) -> None:
+    """A rulebook with a text layer must not be sent as page images.
+
+    The Sushi Go rulebook has both: 21KB of text and several hundred *card
+    illustrations*. Sending it down the image path would deliver hundreds of thumbnails
+    and no rules, and the compiler would produce a confidently wrong module rather than
+    an error.
+    """
+    monkeypatch.setattr(
+        generate.ingest,
+        "read_material",
+        lambda path: Material(source=str(path), text="RULES OF PLAY: take a card, pass the rest."),
+    )
+    provider = install_provider(ScriptedProvider(compiled(GOOD_SOURCE)))
+
+    result, events = run(tmp_path, attempts=2)
+
+    assert result.ok
+    content = provider.requests[0].messages[0]["content"]
+    assert isinstance(content, str), "text material must not be wrapped as image parts"
+    assert "take a card, pass the rest" in content
+    ingested = [e for e in events if e.get("event") == "rule_material_ingested"]
+    assert ingested and ingested[0]["kind"] == "text"
+
+
+def test_the_catalog_note_is_only_sent_when_asked_for(install_provider, tmp_path) -> None:
+    """Most games know what their cards do at compile time; only some learn at runtime."""
+    provider = install_provider(ScriptedProvider(compiled(GOOD_SOURCE)))
+    run(tmp_path, attempts=2)
+    parts = provider.requests[0].messages[0]["content"]
+    text = next(p["text"] for p in parts if p["type"] == "text")
+    assert "come from a catalog" not in text
+
+
+def test_the_catalog_note_tells_the_compiler_what_it_must_implement() -> None:
+    """Generated from the vocabulary, so instructions cannot drift from what validates."""
+    note = generate.catalog_requirements()
+    assert "Do NOT hardcode" in note
+    assert "resolve_unknown" in note
+    assert "SUPPORTED_OPS" in note
+    assert 'state["unknown"]' in note
+    # And it carries the real operation list, not a restatement of it.
+    from automa.catalog.vocabulary import VOCABULARY
+    for name in VOCABULARY:
+        assert name in note
+
+
+def test_the_catalog_note_can_be_narrowed_to_what_a_game_implements() -> None:
+    note = generate.catalog_requirements({"score_per_set", "multiply_next"})
+    assert "score_per_set" in note
+    assert "discard_opponent" not in note
+
+
+
+def test_the_contract_spells_out_the_viewer_member_names() -> None:
+    """Regression from two compiles in a row.
+
+    Both the DNUP and Sushi Go modules wrote `Viewer.public` and lost a repair round to
+    it. The contract text showed the enum's *values* - `(public, automa, human)` - and
+    never its member names, so lowercase was a reasonable inference from what it was
+    given. That is a defect in the prompt, not in the model.
+    """
+    from automa.core.game import Viewer
+
+    text = generate.contract_text()
+    for member in Viewer:
+        assert f"Viewer.{member.name}" in text, f"{member.name} is not spelled out"
+    assert "UPPERCASE" in text
+
+
+def test_a_truncated_response_is_a_failed_attempt_not_a_crash(install_provider, tmp_path) -> None:
+    """Regression from the Sushi Go compile.
+
+    A call can succeed and still parse to nothing - the usual cause is the answer
+    running into `max_tokens` mid-JSON, so the provider returns text, the schema never
+    validates, and `parsed` is None. The loop assumed a completed call always parsed,
+    and died with an AttributeError three lines later, losing four attempts of work.
+    """
+    from automa.llm.providers.base import LLMResponse
+
+    truncated = LLMResponse(
+        text='{"module_source": "def initial_state(',  # cut off mid-JSON
+        parsed=None,
+        stop_reason="MAX_TOKENS",
+        input_tokens=100,
+        output_tokens=32768,
+        raw_content=[],
+    )
+    provider = install_provider(ScriptedProvider(truncated, compiled(GOOD_SOURCE)))
+
+    result, _ = run(tmp_path, attempts=3)
+
+    assert result.ok, "the loop should recover, not crash"
+    assert result.attempts[0].stage == "truncated"
+    assert "cut off" in result.attempts[0].problems[0]
+    followup = provider.requests[1].messages[-1]["content"]
+    assert "keep it compact" in followup

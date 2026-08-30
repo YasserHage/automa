@@ -35,7 +35,14 @@ from automa import config
 from automa.agents.tactician import tactician_decider
 from automa.core.game import AUTOMA
 from automa.core.loader import load_game
-from automa.core.match import Decision, TurnContext, play_match, random_decider, viewer_for
+from automa.core.match import (
+    Decision,
+    TurnContext,
+    play_match,
+    random_decider,
+    uninformed,
+    viewer_for,
+)
 from automa.eval import cases as case_lib
 from automa.eval.baseline import baseline_decider, match_action
 from automa.trajectory import TrajectoryWriter
@@ -119,6 +126,9 @@ def run_match(target: str, game_name: str, seed: int, directory: Path | None) ->
             {AUTOMA: _decider(target, seed=seed), opponent: random_decider(seed)},
             seed=seed,
             trajectory=traj,
+            # Nobody to ask: the battery runs unattended, so a game that asks what was
+            # dealt gets the same answer self-play gives it and deals its own.
+            informant=uninformed,
         )
         path = str(traj.path)
         calls, cost = traj.llm_calls, traj.total_cost_usd

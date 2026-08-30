@@ -1,0 +1,138 @@
+{
+  "schema_version": 1,
+  "game": "sushigo",
+  "cards": {
+    "chopsticks": {
+      "effects": [],
+      "description": "Swap it back into your hand to take two cards on a later turn instead of one.",
+      "learned_at": "2026-08-30T00:32:25+00:00",
+      "unresolved": "Changes how many cards you take on a turn rather than what anything scores - that is turn structure, not a card effect. The vocabulary has no operation for it and deliberately gains none: letting a model invent primitives is the one thing invariant 5 forbids."
+    },
+    "dumpling": {
+      "effects": [
+        {
+          "op": "score_tiered",
+          "tiers": [
+            1,
+            3,
+            6,
+            10,
+            15
+          ]
+        }
+      ],
+      "description": "The more dumplings, the steeper the reward.",
+      "learned_at": "2026-08-30T00:32:25+00:00"
+    },
+    "egg_nigiri": {
+      "effects": [
+        {
+          "op": "score_flat",
+          "points": 1
+        }
+      ],
+      "description": "Worth 1.",
+      "learned_at": "2026-08-30T00:32:25+00:00"
+    },
+    "maki_1": {
+      "effects": [
+        {
+          "op": "score_majority",
+          "first": 6,
+          "second": 3,
+          "count_field": "icons"
+        }
+      ],
+      "description": "One maki icon; most icons scores 6, second-most 3.",
+      "learned_at": "2026-08-30T00:32:25+00:00"
+    },
+    "maki_2": {
+      "effects": [
+        {
+          "op": "score_majority",
+          "first": 6,
+          "second": 3,
+          "count_field": "icons"
+        }
+      ],
+      "description": "Two maki icons; most icons scores 6, second-most 3.",
+      "learned_at": "2026-08-30T00:32:25+00:00"
+    },
+    "maki_3": {
+      "effects": [
+        {
+          "op": "score_majority",
+          "first": 6,
+          "second": 3,
+          "count_field": "icons"
+        }
+      ],
+      "description": "Three maki icons; most icons scores 6, second-most 3.",
+      "learned_at": "2026-08-30T00:32:25+00:00"
+    },
+    "pudding": {
+      "effects": [
+        {
+          "op": "score_at_end",
+          "first": 6,
+          "last": -6
+        }
+      ],
+      "description": "Settled once at the end of the game: most puddings scores 6.",
+      "learned_at": "2026-08-30T00:32:25+00:00"
+    },
+    "salmon_nigiri": {
+      "effects": [
+        {
+          "op": "score_flat",
+          "points": 2
+        }
+      ],
+      "description": "Worth 2.",
+      "learned_at": "2026-08-30T00:32:25+00:00"
+    },
+    "sashimi": {
+      "effects": [
+        {
+          "op": "score_per_set",
+          "size": 3,
+          "points": 10
+        }
+      ],
+      "description": "Three sashimi score 10; fewer score nothing.",
+      "learned_at": "2026-08-30T00:32:25+00:00"
+    },
+    "squid_nigiri": {
+      "effects": [
+        {
+          "op": "score_flat",
+          "points": 3
+        }
+      ],
+      "description": "Worth 3.",
+      "learned_at": "2026-08-30T00:32:25+00:00"
+    },
+    "tempura": {
+      "effects": [
+        {
+          "op": "score_per_set",
+          "size": 2,
+          "points": 5
+        }
+      ],
+      "description": "Two tempura score 5; a lone one scores nothing.",
+      "learned_at": "2026-08-30T00:32:25+00:00"
+    },
+    "wasabi": {
+      "effects": [
+        {
+          "op": "multiply_next",
+          "category": "nigiri",
+          "factor": 3
+        }
+      ],
+      "description": "Triples the next nigiri placed on it.",
+      "learned_at": "2026-08-30T00:32:25+00:00"
+    }
+  }
+}

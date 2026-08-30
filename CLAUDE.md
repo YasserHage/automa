@@ -4,22 +4,78 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project state
 
-**Phase 4 is complete.** The rule compiler works: a model reads the scanned rulebook and
-a submitted card list and produces a game module that passes a static scan, a subprocess
-sandbox, 200 matches of self-play and the same contract tests the hand-written games face.
-A Tactician has played a full match on the compiled module. Results in
-`docs/phase4_results.md`; earlier phases in `docs/phase3_results.md` and
-`docs/phase2_results.md`. Phase 5 (effect vocabulary and incremental card ingestion) is
-next, and needs a third game with **effect cards and a draw deck** - that game is what
-makes invariant 5 and the per-turn information loop real.
+**Phase 5 is substantially complete; its exit criterion is partially met.** A third
+game, Sushi Go, is compiled and installed, its card effects are learned rather than
+hardcoded, and the ingestion loop is wired end to end: the module declares what it does
+not know, the core asks through the `informant` seam, a Cataloguer agent turns a person's
+sentence into typed operations, and the answer is stored so nobody is asked twice. A
+separate Catalog Builder drafts from the rulebook beforehand, so only what the material
+omits reaches the table. Measured: an empty catalog puts 12 questions to a person, the
+second match 0. **What is missing is a complete live match** - every one played so far was
+abandoned part-way. Results in `docs/phase5_results.md`; earlier phases in
+`docs/phase4_results.md`, `docs/phase3_results.md` and `docs/phase2_results.md`.
 
-**The lesson worth carrying:** the compiler's first module passed 200 matches of self-play
-with zero violations while crashing the moment anyone rendered the board. `describe_state`
-was the one contract method the Phase 1 harness never called, and three phases of
-hand-written games never exposed it. Generated code is a better test of a validator than
-hand-written code, because it does not share the author's assumptions. Two defects in the
-compiled module still pass every gate: it ignores the `viewer` argument (so a human cannot
-see their own hand), and it sets `NAME = "dnup"`, colliding with the hand-written module.
+Invariant 5 now has something to bite on, and invariant 4's `unknown` convention is
+exercised by a shipped game rather than only by deliberately broken test modules.
+
+**The lesson worth carrying from Phase 4:** the compiler's first module passed 200 matches
+of self-play with zero violations while crashing the moment anyone rendered the board.
+`describe_state` was the one contract method the Phase 1 harness never called. Generated
+code is a better test of a validator than hand-written code, because it does not share the
+author's assumptions.
+
+**The lesson worth carrying from Phase 5:** the same thing happened again, twice, and both
+times the defect was mine. Self-play knew nothing about the `unknown` state key, so a
+module that correctly declared missing information deadlocked; the model escaped by
+inventing a no-op action that could not advance `ply`, and two of four compile attempts
+went on it. Then, separately: **four vocabulary fields carry a name the catalog and the
+module must agree on** - `count_field`, `flag`, `resource`, `category` - and a mismatch
+never raises. The module looks for a name nobody wrote, its rule silently never fires, and
+the game plays on producing plausible numbers. Maki scored a median 61 instead of 49 with
+the win rate sitting at a healthy 50/50; the entire chopsticks mechanic was switched off,
+0 actions offered against 1,435. I guarded one field and the second instance arrived within
+the hour on another. Modules now declare `TERMS`, and where they do not, the structuring
+agents fall back on naming a card's marker after the card type.
+
+**Two things `plan.md` predicted that turned out wrong**, both worth remembering before
+trusting a prediction in it. Chopsticks was named as the card the vocabulary could not
+express; in fact the compiler split it correctly - the rule into the module as turn
+structure, the trigger into the catalog as `set_flag` - and only a Cataloguer prompt that
+assumed every card scores broke the chain. And a hand-written reference is not what makes
+a compiled module trustworthy; the gates are.
+
+**Since Phase 5, and outside its scope: the physical deck is now the default.** Phases 6
+and 7 are abandoned for time, so how a match starts is settled here rather than in Phase
+7. A module no longer deals itself a hand: it declares the components it is missing
+(`unknown` of `kind: "components"`, carrying a `slot` and a `count`) and the person reads
+the real cards off the table. Answers are plain strings the *module* interprets, the count
+is the only validation, and an unrecognised name is passed through rather than refused -
+for a game whose cards are learned, that is how a new card arrives. Nobody to ask means
+`unavailable`, which is when the seeded shuffle happens, so self-play, the fingerprint and
+the eval battery all still deal exactly what they always did. `--simulate` and `--auto`
+take that path deliberately. Note the consequence for the state contract: `initial_state`
+routinely returns a state that is *waiting*, so any caller that steps a fresh state must
+`settle()` it first (`core/game.py`), and `check_invariants` must call an undealt state
+sound rather than broken.
+
+**Since then, and outside every phase: there is a local web UI** (`automa-web`,
+`src/automa/web/`). It is an *additional surface* and changes nothing measured — the eval
+battery, the reproduction guide and every changelog number still run through the CLI. It
+amends the `V1 interface | CLI` locked decision rather than reversing it, because it
+invalidates no completed work. Two bugs it exposed are worth carrying: `pending` must
+**nest** a question's payload rather than spread it (the payload's own `kind` overwrote the
+route discriminator, so every answer was refused with a 409), and a game's identity is its
+**module name**, not its `NAME` — `dnup.py` and `dnup_compiled.py` both declare
+`NAME = "dnup"`, so keying on `NAME` made one unreachable. Both are the Phase 4
+`describe_state` shape: a seam nothing exercised until a second consumer arrived.
+
+**Still open, carried forward:** maki is wrong in the shipped Sushi Go catalog and is fixed
+by recompiling under `TERMS`, deferred by decision to Phase 8, which reuses this game. No
+complete live Sushi Go match exists. `src/automa/compiler/material/sushigo_cards.md` was
+hand-written far tidier than a real submission would be, which flatters the compile result
+and must not be repeated for Phase 8's held-out game. `call_llm` accepts
+`trajectory=None` and logs nothing, so invariant 3 holds by callers remembering rather than
+by construction - one breach already occurred and was fixed.
 
 Before writing any code, re-read `plan.md` in full; it is the authoritative spec for
 architecture, phase scope, and exit criteria. Do not paraphrase or summarize it away — refer
@@ -53,9 +109,11 @@ Two zones: **setup** (once per game) and **match** (each session).
 - **Match:** two LLM agents run at different speeds around a deterministic core.
   - **Strategist** (slow cycle): runs at match start and on specific triggers, producing a
     *policy* (priorities/weights), not a move plan.
-  - **Tactician** (fast cycle, every turn): receives the public board view, Automa's hand,
-    the active policy, and a numbered list of legal actions; returns an index + one-line
-    justification.
+  - **Tactician** (fast cycle, every turn): receives Automa's own view of the board, the
+    active policy, and a numbered list of legal actions; returns **an index and nothing
+    else**. `plan.md` also specifies a one-line justification; it was measured (about half
+    of every response's output tokens, read by nothing downstream, and often confidently
+    wrong) and removed by decision.
   - **Deterministic core** (pure Python, no LLM): maintains match state, runs the game module
     to enumerate legal actions each turn, applies state transitions, and exposes different
     views to each agent — the tactician never sees what it shouldn't.
@@ -99,7 +157,7 @@ Do not revisit these during execution — a change here invalidates completed wo
 | Language | Python 3.11+ | LLM SDKs, subprocess for sandbox |
 | Legality | Enumerated by code, never by LLM | Hallucination impossible by construction |
 | Game module | Generated Python with fixed interface | Full expressiveness for arbitrary games |
-| Automa's hand | Open — visible to the human | Physical logistics + auditability |
+| Automa's hand | **Hidden from the human** (reversed 2026-08-30; was open) | Showing it hands the opponent perfect information and spoils the match. The original reasoning was physical - the person plays Automa's side, so they would see the cards anyway - but that is a table problem, not an interface one, and auditability is served better by the trajectory, which records every state Automa saw. |
 | V1 interface | CLI | UI does not score on the rubric |
 | Camera | Optional, only if time allows | Not on the critical path |
 
@@ -180,9 +238,23 @@ src/automa/
   agents/            Tactician (Phase 2), Strategist (Phase 6)
   games/             hand-written game modules (Phase 1)
   compiler/          rule material -> game module (Phase 4)
+  table.py           what is on the physical table, read out by the person
+  catalog/           what each card does, as data (Phase 5)
+    vocabulary.py    the closed set of effect operations, and their validation
+    store.py         load / learn / park / forget, persisted per game
+    build.py         rule material -> a drafted catalog (a separate agent)
+    informant.py     answers the module's questions: catalog first, person second
   eval/              baseline + harness (Phase 3)
+  web/               local web UI - an ADDITIONAL surface; the CLI stays canonical
+    app.py           create_app(): routes, static mount, lifespan drain on shutdown
+    routes/          thin HTTP adapters, nothing but validation and status codes
+    services/        every domain call, as pure functions returning plain dicts
+    sessions/jobs    a match or a compile on a daemon thread, driven through queues
+    static/          plain HTML/CSS/JS, no build step, no CDN
   scripts/           runnable entry points
 tests/
+  fixtures/          reference data a test loads on purpose, never found by accident
+catalog/             per-game card effects, written by runs, never committed
 trajectories/        JSONL output, gitignored                <- data
 ```
 
@@ -197,9 +269,22 @@ Environment: Python 3.12, `.venv` at the repo root, editable install.
 .venv\Scripts\python -m automa.trajectory.show <file> # or: automa-show
 .venv\Scripts\python -m automa.scripts.validate_games --matches 500 \
     --json docs/validation/phase1.json                # or: automa-validate
-.venv\Scripts\python -m automa.scripts.play --game nim --seed 1   # or: automa-play
+.venv\Scripts\python -m automa.scripts.play --game dnup          # or: automa-play
+.venv\Scripts\python -m automa.scripts.play --game dnup --simulate  # deal internally, testing only
 .venv\Scripts\python -m automa.scripts.play --game dnup --auto    # unattended, no human
+.venv\Scripts\python -m automa.scripts.build_catalog --game sushigo \
+    --material files/SushiGo_rules.pdf \
+    --cards src/automa/compiler/material/sushigo_cards.md    # or: automa-catalog
+.venv\Scripts\python -m automa.scripts.play --game sushigo --catalog  # learns at the table
+.venv\Scripts\python -m automa.scripts.web                       # or: automa-web
 ```
+
+`automa-web` serves the UI on `127.0.0.1:8765`. It is an **additional surface**: no
+measured result runs through it, `automa.eval` does not know it exists, and the
+reproduction guide is unchanged. It binds loopback only and refuses a non-loopback
+`--host` outright (it executes compiled game modules in-process and has no auth);
+`AUTOMA_WEB_ALLOW_REMOTE=1` overrides deliberately awkwardly. There is no `--reload` —
+it needs an undeclared dependency and would restart mid-match.
 
 Adding a console script needs `pip install -e . --no-deps` before the short name resolves;
 the `python -m` form works immediately.
@@ -229,13 +314,18 @@ the `python -m` form works immediately.
 
 ### Games
 
-`nim` and `dnup`, chosen to be structurally distant so the interface cannot be shaped by
-one of them. Nim has no hand, no deck and no hidden information; DNUP has hidden hands, a
+`nim`, `dnup` and `sushigo`, chosen to be structurally distant so the interface cannot be
+shaped by one of them. Nim has no hand, no deck and no hidden information; DNUP has hidden hands, a
 contested shared table and two play areas per player. Nim also carries `optimal_actions()`
 — **outside** the contract, never used in play — which gives Phase 3 and Phase 6 a
 perfect-play oracle, so decision *quality* is measurable and not just legality.
 
-`dnup` implements the two-player mode of a real published game (Asmodee). Per invariant 6
+`dnup` deals nothing itself: at the start of every round it asks the table for both
+hands, 13 cards each, read out as `up/down` pairs. Orientation is the hidden state the
+game turns on, so it is taken as read rather than guessed, and the star card falls out of
+the answer, so nobody is asked who opens. A token matching no printed card is kept and
+reported by `check_invariants` rather than refused. `dnup` implements the two-player mode
+of a real published game (Asmodee). Per invariant 6
 the rulebook lives in the gitignored `files/` directory and **no rule text, card text or
 scan is reproduced anywhere in the repository** — the module implements mechanics and
 paraphrases in its docstring. The rulebook does not list the deck, so `DECK` was
@@ -244,6 +334,21 @@ values are plentiful (1 and 2 appear seven times each), high values scarce (8 fo
 9 three, 10 exactly once, so a value-10 set can never exceed one card). One thing remains
 an assumption, labelled in the module: deal orientation is taken to be random, which is
 what happens physically but is not stated in the rules.
+
+`sushigo` is the Phase 5 game and the first with **effect cards, a draw of sorts, and
+simultaneous selection**. It is compiler-generated (`automa-compile --catalog`), installed
+under its own `NAME`, and carries the generated-module header - do not hand-edit it, and
+do not lint it. What makes it different from the other two is that it knows the *rules* and
+not the *cards*: every card effect is read from `catalog/sushigo.json` at runtime, and a
+card nobody has described sets the `unknown` state key so the core can ask. Its rulebook
+(Gamewright) is likewise gitignored under invariant 6.
+
+**The catalog is never committed.** `catalog/` is the product's output directory, filled by
+a run and by answers given at the table; `tests/test_catalog_is_earned.py` fails if a JSON
+file there is ever tracked by git. A shipped catalog would answer questions the product
+never asked and make the Phase 5 number meaningless. The hand-written reference effects
+used to exercise the module deliberately live in `tests/fixtures/` under a name that cannot
+be mistaken for one.
 
 The same rulebook is the Phase 4 compiler's input, which is why a real game is worth more
 here than an invented one: "the compiler reproduces the hand-written module" becomes a test
@@ -265,15 +370,46 @@ lives in `agents/`; the human decider does terminal I/O and lives in `scripts/pl
 core does neither. Phase 3 reuses `play_match` with a baseline decider, and Phase 6 with two
 tacticians — only the deciders change.
 
-Two parameters are reserved and currently raise or go unused rather than silently doing
-nothing: `initial=` (Phase 7, start from the hand actually dealt at the physical table) and
-`informant=` (Phase 5). **An informant is not a decider.** It supplies information only the
-table has — a drawn card, a die roll — and supplying a fact is neither a decision nor a
-corrective intervention; counting it as either would corrupt the primary metric. Neither Nim
-nor DNUP draws a card, so the schema by which a module declares what it is missing is
-designed in Phase 5, whose third game is specified to have **effect cards and a draw deck**
-so the mechanism is exercised against a real game rather than discovered in Phase 8. That
-game also closes the invariant 5 gap left open by Phase 1.
+`initial=` remains unused: it was reserved for Phase 7, which is abandoned, and it is the
+wrong seam for playing with real cards anyway — it makes the *caller* build a game-specific
+state, which the core must never know how to do.
+
+`informant=` is how the table speaks instead. **An informant is not a decider.** It supplies
+information only the table has — which cards were dealt, a drawn card, a die roll, what an
+unfamiliar card does — and supplying a fact is neither a decision nor a corrective
+intervention; counting it as either would corrupt the primary metric. It is counted as
+`MatchResult.informed` and logged as `table_information`.
+
+Two kinds of question travel that one seam, and two informants answer them, joined by
+`match.compose`, which asks each in turn and takes the first answer that is not
+`unavailable`:
+
+- `kind: "components"` — *which* cards these are. Answered by `automa/table.py` straight
+  from the person, with **no model involved**: an identity is a fact, not prose needing
+  structuring. The module's `count` is the only validation, and a name it does not
+  recognise is passed through, never refused — for a catalog game that unrecognised name
+  flows on into the next kind of question and becomes a card described once.
+- `kind: "card_effect"` — what a card *does*. Answered by `automa/catalog/informant.py`:
+  catalog first, person second, structured by the Cataloguer into vocabulary operations.
+
+A module that is told `unavailable` falls back to its own seeded deal, which is what every
+self-play playout answers and therefore what validates the path offline.
+
+**A third implementation of that seam is queue-backed.** `web/services/session.py` runs
+`play_match` unmodified on a daemon thread and blocks its callbacks on `queue.Queue`
+objects that HTTP handlers feed from outside — the decider waits for a move, the two
+askers wait for an answer. Three things about it are load-bearing. The decider *re-loops*
+on an out-of-range index rather than passing it on, because `IllegalDecision` is not
+caught by the loop's `except MatchAbandoned` and would kill the match with no `match_end`.
+A **timed-out or abandoned ask must raise, never return `None`** — `catalog_informant`
+parks a card only *after* `ask()` returns, so a `None` on a dropped connection would
+permanently park it as "nobody at the table could describe it" and corrupt the Phase 5
+question count for every future match. And `pending` nests the question's payload rather
+than spreading it: a question carries its own `kind`, which spreading used to overwrite
+the discriminator the routes dispatch on, so every answer was refused with a 409.
+
+The web session must never call `settle()` — it always has a real informant, and settling
+first would answer every question `unavailable` before that informant ever saw it.
 
 When a tactician call fails after its retries, the decider plays a random legal action,
 marks the `Decision` as a fallback, and emits `core_event/tactician_fallback`. The match
@@ -331,11 +467,26 @@ name a particular game. `automa/core/loader.py` is where that line is drawn — 
 `automa.games.<name>` through `importlib` at runtime, and the test is what stops anyone
 "simplifying" that into a plain import.
 
-Invariant 5 has nothing to bite on yet. Neither Phase 1 game has card effects (Nim has no
-cards; DNUP's cards are value pairs), so the effect-vocabulary ground truth is deferred to
-Phase 5 as a named deliverable rather than being a Phase 1 gap. Likewise the `pending`
-convention is used by no shipped game, so it is exercised only by the deliberately broken
-modules in `tests/test_selfplay.py` — an untested convention would be worse than none.
+Invariant 5 is enforced by `automa/catalog/vocabulary.py`, whose `VOCABULARY` is a closed
+set of twelve typed operations. A card's effect is a list of those operations, and a
+description that cannot be expressed in them is *parked* for a person rather than
+approximated — the one place this architecture forbids a model from inventing behaviour.
+Nothing evaluates a string, and no agent emits anything but data that has to validate.
+Neither Phase 1 game exercises it (Nim has no cards; DNUP's cards are value pairs); Sushi
+Go does.
+
+Adding an operation to that set is a deliberate act by a person editing that file, never
+something that can happen during a match. Note the trap the vocabulary carries: four
+fields — `count_field`, `flag`, `resource`, `category` — hold a *name* rather than a
+number, and it is the only place a catalog and a module can disagree while both stay
+valid. The disagreement never raises; the module looks for a name nobody wrote and its
+rule silently never fires. Modules declare `TERMS` so the mismatch is caught, and
+`tests/test_count_field_agreement.py` is what keeps that true.
+
+The `pending` convention is still used by no shipped game — Sushi Go expresses simultaneous
+selection through hidden sequential choice, not `pending` — so it remains exercised only by
+the deliberately broken modules in `tests/test_selfplay.py`. An untested convention would
+be worse than none.
 
 ## Git
 

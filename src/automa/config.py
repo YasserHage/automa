@@ -47,6 +47,16 @@ DEFAULT_MODELS: dict[str, str] = {
     # solution's agents; the difference under test is the architecture, not the
     # model. See plan.md Phase 3.
     "baseline": DEFAULT_MODEL,
+    # Turns one sentence a person said at the table into a few typed operations. A
+    # small, tightly-constrained structuring job whose output is validated against a
+    # closed vocabulary before it is stored, so the cheap model is the right one.
+    "cataloguer": DEFAULT_MODEL,
+    # Reads a whole rulebook and drafts as much of the card catalog as the material
+    # actually states. A separate role from `cataloguer` because it is a different job
+    # on different input - one long document rather than one sentence a person said -
+    # and separating them means a run can move the reading job to a stronger model
+    # without touching what happens at the table.
+    "catalog_builder": DEFAULT_MODEL,
 }
 
 
