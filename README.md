@@ -6,6 +6,8 @@
 > value, failure mode, hot take) is Phase 8. See `plan.md` for the execution plan and
 > `CLAUDE.md` for the invariants.
 
+## Problem
+
 You play a physical board or card game at the table with real components. Automa plays
 the other side.
 
@@ -97,7 +99,9 @@ Roughly 20 minutes and under $0.20 per arm on the Gemini free-to-cheap tier. The
 baseline's rules brief lives at `src/automa/eval/rules/`, committed so the fairness of
 the comparison can be audited rather than taken on trust.
 
-## Setup
+## Reproduction Guide
+
+### Setup
 
 Requires Python 3.11+ (developed and pinned against 3.12).
 
@@ -113,7 +117,7 @@ you need. Change the model without touching code by setting `AUTOMA_MODEL` in `.
 implemented too — point a role at it with
 `AUTOMA_MODEL_<ROLE>=anthropic:claude-opus-5` and set `ANTHROPIC_API_KEY`.
 
-## Commands
+### Commands
 
 ```bash
 .venv\Scripts\python -m pytest                    # full suite, offline, no API key needed
@@ -131,6 +135,28 @@ not refused. Press Enter if you cannot say and it deals its own. `--seed` and `-
 exist for testing a game without the physical deck in front of you.
 
 The first three are also installed as `automa-hello`, `automa-show` and `automa-play`.
+
+## Agent Trajectories
+
+Representative trajectories are committed explicitly (`git add -f trajectories\<file>.jsonl`)
+so the reader is never asked to trust a run that isn't there; every other file under
+`trajectories/` is gitignored output. The most recent successful run of each agent, as of
+2026-08-30:
+
+| Agent | Game | File | Result | Committed |
+|---|---|---|---|---|
+| **Compiler** | DNUP | `20260829-191447-compile-dnup-1b973afa97ed.jsonl` | 1 attempt, $0.35, 200/200 self-play | Yes |
+| **Compiler** | Sushi Go | `20260830-164432-compile-sushigo-3d2a45b41736.jsonl` | attempt 1 failed self-play (an `apply` mutation bug), attempt 2 passed 200/200, $0.024 total | **Not yet** |
+| **Compiler** | Nim | — | Nim is hand-written (Phase 1) and has never been run through the compiler | n/a |
+| **Catalog Builder** | Sushi Go | `20260829-233734-catalog-sushigo-f5012e7c175f.jsonl` | 11/12 card types drafted, $0.006 (the run cited in the V4 changelog row) | **Not yet** |
+| **Tactician** | Nim | `20260830-161842-nim-4ff100cd1925.jsonl` | Complete match, 6 turns, human won | **Not yet** |
+| **Tactician** | DNUP | `20260829-192451-dnup-4a9b14024253.jsonl` | Complete match, 79 turns, automa won, $0.0096 (the match cited in the V2 changelog row) | Yes |
+| **Tactician** | Sushi Go | — | No complete live match exists yet — every one played so far ended `abandoned` mid-match (most recent: `20260829-234122-sushigo-7420c53298c6.jsonl`, 4 turns/7 plies); see V3 in the changelog | n/a |
+| **Cataloguer** | Sushi Go | — | Not yet exercised by any existing trajectory: 11 of 12 card types were pre-drafted by the Catalog Builder, so every live match so far answered `card_effect` questions straight from the catalog rather than asking a person | n/a |
+
+Files marked **Not yet** already exist under `trajectories/` but are still gitignored;
+`git add -f trajectories\<file>.jsonl` is what commits each as submission evidence. The
+**Strategist** was abandoned in Phase 6, so none exists at all.
 
 ## Web UI
 
@@ -199,3 +225,20 @@ Enforced, not aspirational:
 Invariants 1 and 2 are checked by `tests/test_core_is_llm_free.py`, which fails the
 build if anything under `core/` imports a model client. Invariant 3 holds because
 `llm.call.call_llm` is the only function in the project that talks to a model.
+
+## Main Failure Mode
+
+The same shape of bug recurred three times: a contract member or naming convention that
+nothing exercises until a second consumer arrives, and a mismatch between the two sides
+that never raises. `describe_state` (V2) was the one contract method 200 self-play
+matches never called. The `count_field`/`flag`/`resource`/`category` name mismatch (V4)
+silently turned off Sushi Go's chopsticks mechanic for 60 matches. `pending` spreading its
+own payload over its own discriminator (V6) refused every web-UI answer with a 409. All
+three are documented in the changelog above, at the point each was found and fixed.
+
+## Hot Take
+
+Generated code is a better test of a validator than hand-written code, because it does
+not share the author's assumptions. The compiled DNUP module passed 200 self-play matches
+while crashing the instant anyone rendered the board — three phases of hand-written games
+never exposed that gap, because both games I wrote happened to render fine.
