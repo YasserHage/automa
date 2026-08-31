@@ -9,6 +9,22 @@ from automa.config import MissingCredentialError
 
 
 class TestModelForRole:
+    @pytest.fixture(autouse=True)
+    def _no_ambient_model_overrides(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Resolution order can only be tested from a known starting point.
+
+        `config` calls `load_dotenv()` at import, so a developer's own `.env` - which
+        legitimately carries `AUTOMA_MODEL` or `AUTOMA_MODEL_<ROLE>` while they sweep a
+        role - lands in `os.environ` before any test runs. A test asserting that some
+        role falls through to `DEFAULT_MODELS` then fails on a working tree rather than
+        on a defect, and passes again on a clean checkout: the worst kind of red,
+        because it is real output that means nothing. Clearing the whole family first
+        makes each test state its own preconditions.
+        """
+        monkeypatch.delenv(config.GLOBAL_MODEL_VAR, raising=False)
+        for role in config.DEFAULT_MODELS:
+            monkeypatch.delenv(f"AUTOMA_MODEL_{role.upper()}", raising=False)
+
     def test_every_role_resolves_to_a_provider_prefixed_model(self) -> None:
         for role in config.DEFAULT_MODELS:
             assert ":" in config.model_for(role)

@@ -215,6 +215,18 @@ fills in as cards appear.
    `state["unknown"] = {{"kind": "card_effect", "card_type": <type>, "prompt": <question>}}`
    and return the state as it stands. Leave `unknown` absent or None the rest of the time.
 
+   **Check for this at the moment a card actually enters play, not only when a hand is
+   dealt.** A card only needs its effect once it sits somewhere your scoring will later
+   read it - a tableau, a play area, anywhere collected cards are scored. That is a
+   different moment from dealing a hand, and checking only at deal time (or only when a
+   new round starts) misses every card played *during* a round: your scoring code would
+   read an empty catalog entry for it, silently score it as nothing, and nothing would
+   raise - the match still terminates cleanly, and the person is never asked. If you
+   write one helper that scans every card type currently sitting in a scoring area, call
+   it from every place `apply` can add a card to one, not only from round-start or
+   deal-resolution. A scoring rule silently switched off this way is indistinguishable
+   from a card that was correctly recorded as worth nothing.
+
    **The engine answers it before anyone is asked to move.** After `initial_state` and
    after every `apply`, the engine looks for `unknown` and calls `resolve_unknown` until
    it is gone - so `legal_actions` is NEVER called on a state carrying an `unknown`.

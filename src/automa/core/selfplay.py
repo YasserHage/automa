@@ -221,9 +221,84 @@ def _check_views(module: ModuleType, state: Any, record: Any, ply: int) -> None:
 #: another, but not forever.
 MAX_UNKNOWNS_PER_STEP = 8
 
+#: Below this fraction of a module's own declared component vocabulary ever surfacing
+#: as a card_effect question, self-play fails outright rather than merely reporting a
+#: low number. With a reshuffled deck and matches in the hundreds, each starting from
+#: an empty catalog, a module that checks for an unknown effect everywhere a card can
+#: enter a scoring area should see nearly every declared type asked about within a
+#: handful of matches. A gap this wide is the signature of a check that runs only at a
+#: choke point - deal time, round start - that most played cards never pass through: the
+#: first compiled Sushi Go module asked about exactly one of twelve declared card
+#: types ("pudding", the only one this design happens to carry past a round boundary)
+#: because its check ran after `score_round` had already read an empty catalog entry
+#: for everything else and swept it into the discard pile. See Phase 5.
+CARD_EFFECT_COVERAGE_MIN = 0.5
+
+#: Below this many matches, a coverage gap could be sampling noise - a rare card type
+#: might simply not have been dealt yet - rather than a real defect.
+MIN_MATCHES_FOR_COVERAGE_CHECK = 50
+
+#: Ordinary self-play answers every question "unavailable" (see the docstring on
+#: `_resolve_unknowns`), which is correct for checking structural soundness but means a
+#: catalog-driven module's scoring code - whatever reads `catalog["effects"]` and sums
+#: it - is never actually exercised with a real number. A module can pass every other
+#: gate while its scoring never fires and nothing would notice: exactly what happened
+#: to the first compiled Sushi Go module, whose card_effect check ran after
+#: `score_round` had already read an empty effects dict for every card and reset the
+#: tableau - a live match reached a winner only through the pudding-count tiebreak
+#: while `scores` stayed 0-0 for the entire game (docs/phase5_results.md, "the module
+#: bug"). Comparing outcomes to a draw rate does not reliably catch this: a secondary
+#: tiebreak the real scoring math never touches can keep producing plausible-looking
+#: winner variance even while every point total is stuck at zero, as it did there. So
+#: this check is *differential*, not a threshold on one number: for the same seed, it
+#: replays a match twice - once the ordinary way (every question answered
+#: "unavailable"), once with every "card_effect" question answered for real - and
+#: compares the two winners. If a module's scoring genuinely reads what the catalog
+#: records, feeding it real, varying points should change the outcome relative to the
+#: no-information baseline on a good fraction of seeds; if the two are the same too
+#: often, the recorded effects are not reaching the decision at all, whatever the
+#: draw rate looks like on its own.
+#:
+#: The synthetic value varies *by card type*, not a flat constant, because a flat
+#: constant leaked exactly the same failure mode it was meant to catch: two players who
+#: play the same number of cards per round score identically under a flat value
+#: regardless of which specific cards they held, so a flat effect agreed with the
+#: no-information baseline on card-count parity alone (measured 57/60 times against a
+#: known-good module - not a usable signal). Varying the point value by card type
+#: instead ties the synthetic score to *which* cards a hand collected, decoupling it
+#: from raw card count and separating a working module (52/100 agreement, measured)
+#: from a broken one (100/100, measured) by a wide margin.
+def _synthetic_effect_for(card_type: str) -> dict[str, Any]:
+    points = 1 + (sum(ord(c) for c in card_type) % 9)
+    return {"op": "score_flat", "points": points}
+
+
+#: How many of the main run's seeds to replay for the scoring-differentiation check.
+#: Deliberately smaller than the main self-play run - this is a coarse sanity signal on
+#: top of it, not another exhaustive structural sweep.
+SCORING_CHECK_MATCHES = 100
+
+#: Below this many countable pairs (both replays reaching a terminal state), the sample
+#: is too small to draw a conclusion from and the check is skipped rather than risking
+#: a false failure.
+MIN_MATCHES_FOR_SCORING_CHECK = 30
+
+#: At or above this fraction of seeds where the informed winner matches the baseline
+#: winner exactly, scoring is not influencing the outcome. Measured 52% agreement
+#: against a module whose scoring genuinely reads recorded effects and 100% against one
+#: whose points-adding code was deliberately deleted while its (unrelated) pudding
+#: tiebreak was left intact - a wide enough gap to threshold well below the broken
+#: case's 100% without crowding a real module's expected disagreement rate.
+SCORING_AGREEMENT_MAX = 0.9
+
 
 def _resolve_unknowns(
-    module: ModuleType, state: Any, record: Any, ply: int
+    module: ModuleType,
+    state: Any,
+    record: Any,
+    ply: int,
+    component_options: set[str],
+    card_effect_types: set[str],
 ) -> tuple[Any, int, bool]:
     """Close every gap the module declares, as ``match.play_match`` does before a turn.
 
@@ -233,7 +308,13 @@ def _resolve_unknowns(
     action to escape that, which then could not advance ``ply`` - a defect the harness
     caused rather than found.
 
-    Returns the state, how many questions were answered, and whether to keep playing.
+    ``component_options`` and ``card_effect_types`` are accumulated across the whole
+    validation run (every match, not just this one): every name a "components" question
+    ever offered as ``options``, and every card type a "card_effect" question ever named.
+    Comparing the two afterwards is what catches a module that only checks for an
+    unknown effect at deal time or round start - a card played and discarded mid-round
+    never shows up in ``card_effect_types`` even though the module itself declared it as
+    one of the names a person could be asked to supply.
     """
     asked = 0
     for _ in range(MAX_UNKNOWNS_PER_STEP):
@@ -249,6 +330,16 @@ def _resolve_unknowns(
                 ply,
             )
             return state, asked, False
+
+        kind = unknown.get("kind")
+        if kind == "components":
+            options = unknown.get("options")
+            if isinstance(options, list):
+                component_options.update(str(o) for o in options)
+        elif kind == "card_effect":
+            card_type = unknown.get("card_type")
+            if card_type:
+                card_effect_types.add(str(card_type))
 
         resolve = getattr(module, "resolve_unknown", None)
         if resolve is None:
@@ -292,10 +383,22 @@ def random_playout(
     module: ModuleType,
     seed: int,
     max_plies: int = DEFAULT_MAX_PLIES,
+    component_options: set[str] | None = None,
+    card_effect_types: set[str] | None = None,
 ) -> PlayoutResult:
-    """Play one match at random, checking every structural property at every step."""
+    """Play one match at random, checking every structural property at every step.
+
+    ``component_options`` and ``card_effect_types`` accumulate across a whole
+    :func:`validate_module` run when the caller passes the same sets into every match;
+    a standalone call (as from a test exercising one seed) can leave them as ``None``
+    and get fresh, throwaway sets.
+    """
     rng = random.Random(seed)
     violations: list[Violation] = []
+    if component_options is None:
+        component_options = set()
+    if card_effect_types is None:
+        card_effect_types = set()
 
     def record(check: str, detail: str, ply: int) -> None:
         violations.append(Violation(seed=seed, ply=ply, check=check, detail=detail))
@@ -311,7 +414,9 @@ def random_playout(
         _check_state(module, state, record, ply)
         # Before the views: a module may legitimately be missing information from the
         # deal onwards, and describe_state has to render that state too.
-        state, asked, proceed = _resolve_unknowns(module, state, record, ply)
+        state, asked, proceed = _resolve_unknowns(
+            module, state, record, ply, component_options, card_effect_types
+        )
         unknowns += asked
         _check_views(module, state, record, ply)
         if not proceed:
@@ -378,7 +483,9 @@ def random_playout(
             # Answering happens between actions, exactly where play_match does it, so
             # legal_actions is never asked for moves in a state the module has said it
             # cannot proceed from.
-            state, asked, proceed = _resolve_unknowns(module, state, record, ply)
+            state, asked, proceed = _resolve_unknowns(
+                module, state, record, ply, component_options, card_effect_types
+            )
             unknowns += asked
             if ply % VIEW_CHECK_EVERY == 0:
                 _check_views(module, state, record, ply)
@@ -427,6 +534,80 @@ def _monotone(new: Any, old: Any) -> bool:
     return isinstance(new, int) and isinstance(old, int) and new >= old
 
 
+def _resolve_unknowns_replay(module: ModuleType, state: Any, informed: bool) -> tuple[Any, bool]:
+    """Like `_resolve_unknowns`, but for the scoring-differentiation check below.
+
+    With ``informed=False`` this is the ordinary self-play convention - every question
+    answered "unavailable" - so it produces the same baseline a module is validated
+    against everywhere else. With ``informed=True``, "card_effect" questions get a real,
+    per-card-type synthetic effect instead. No violations are recorded here and no
+    structural properties are checked: a crash or a stall is reported to the caller as
+    "inconclusive" and excluded from the tally, not treated as a self-play failure in
+    its own right - a synthetic effect is not a claim about correctness the way random
+    self-play's checks are, only a probe for whether scoring reacts to it at all.
+    """
+    for _ in range(MAX_UNKNOWNS_PER_STEP):
+        if not isinstance(state, dict):
+            return state, True
+        unknown = state.get(UNKNOWN)
+        if not unknown:
+            return state, True
+        if not isinstance(unknown, dict) or "kind" not in unknown:
+            return state, False
+        resolve = getattr(module, "resolve_unknown", None)
+        if resolve is None:
+            return state, False
+        if informed and unknown.get("kind") == "card_effect":
+            card_type = unknown.get("card_type")
+            answer = {"card_type": card_type, "effects": [_synthetic_effect_for(card_type)]}
+        else:
+            answer = unavailable_answer(unknown)
+        state = resolve(state, answer)
+    return state, False
+
+
+def _replay_outcome(
+    module: ModuleType, seed: int, informed: bool, max_plies: int
+) -> str | None:
+    """One playout, seeded identically to the main self-play run for this seed.
+
+    Returns "automa"/"human"/"draw", or ``None`` if the match could not be played out
+    to a countable result - excluded from the tally rather than counted as a draw, so a
+    crash cannot masquerade as one. With the same seed and the same sequence of random
+    choices, an ``informed=True`` and an ``informed=False`` run diverge only in what
+    `resolve_unknown` is told about a card's effect - so a difference in the two
+    outcomes can only come from scoring actually reacting to that.
+    """
+    try:
+        rng = random.Random(seed)
+        state = module.initial_state(seed)
+        state, proceed = _resolve_unknowns_replay(module, state, informed)
+        if not proceed:
+            return None
+
+        ply = 0
+        while ply < max_plies:
+            if module.is_terminal(state):
+                break
+            actions = module.legal_actions(state)
+            if not isinstance(actions, list) or not actions:
+                return None
+            state = module.apply(state, rng.choice(actions))
+            ply += 1
+            state, proceed = _resolve_unknowns_replay(module, state, informed)
+            if not proceed:
+                return None
+        else:
+            return None
+
+        if not module.is_terminal(state):
+            return None
+        winner = module.winner(state)
+        return winner if winner is not None else "draw"
+    except Exception:
+        return None
+
+
 def validate_module(
     module: ModuleType,
     matches: int = 500,
@@ -447,9 +628,17 @@ def validate_module(
     """
     report = ValidationReport(game=module.NAME, matches=matches, max_plies=max_plies)
     lengths: list[int] = []
+    component_options: set[str] = set()
+    card_effect_types: set[str] = set()
 
     for i in range(matches):
-        result = random_playout(module, seed=seed0 + i, max_plies=max_plies)
+        result = random_playout(
+            module,
+            seed=seed0 + i,
+            max_plies=max_plies,
+            component_options=component_options,
+            card_effect_types=card_effect_types,
+        )
         report.outcomes[result.outcome] = report.outcomes.get(result.outcome, 0) + 1
         key = result.winner if result.winner is not None else ("draw" if result.ok else "-")
         report.winners[key] = report.winners.get(key, 0) + 1
@@ -463,4 +652,67 @@ def validate_module(
         report.ply_min = min(lengths)
         report.ply_median = statistics.median(lengths)
         report.ply_max = max(lengths)
+
+    if matches >= MIN_MATCHES_FOR_COVERAGE_CHECK and component_options:
+        covered = component_options & card_effect_types
+        if len(covered) < len(component_options) * CARD_EFFECT_COVERAGE_MIN:
+            missing = sorted(component_options - card_effect_types)
+            report.violations.append(
+                Violation(
+                    seed=-1,
+                    ply=-1,
+                    check="card_effect_covers_the_declared_component_vocabulary",
+                    detail=(
+                        f"(aggregate over all {matches} matches) only "
+                        f"{len(covered)}/{len(component_options)} component types the "
+                        "module itself offered as an 'options' list ever came back as "
+                        f"the card_type of a card_effect question - missing, e.g., "
+                        f"{missing[:10]}. A catalog-driven module must check for an "
+                        "unknown effect at the moment a card enters a scoring area, not "
+                        "only when a hand is dealt or a round starts: a card type this "
+                        "sparse in card_effect questions is being asked about, if at "
+                        "all, only at a choke point that most played cards never pass "
+                        "through - so scoring silently reads an empty catalog entry for "
+                        "them instead."
+                    ),
+                )
+            )
+
+    supported = getattr(module, "SUPPORTED_OPS", None)
+    if supported and "score_flat" in supported and matches >= MIN_MATCHES_FOR_SCORING_CHECK:
+        agree = 0
+        counted = 0
+        for i in range(min(matches, SCORING_CHECK_MATCHES)):
+            seed = seed0 + i
+            baseline = _replay_outcome(module, seed, informed=False, max_plies=max_plies)
+            informed = _replay_outcome(module, seed, informed=True, max_plies=max_plies)
+            if baseline is None or informed is None:
+                continue
+            counted += 1
+            if baseline == informed:
+                agree += 1
+
+        if counted >= MIN_MATCHES_FOR_SCORING_CHECK and agree >= counted * SCORING_AGREEMENT_MAX:
+            report.violations.append(
+                Violation(
+                    seed=-1,
+                    ply=-1,
+                    check="scoring_reacts_to_a_cards_recorded_effect",
+                    detail=(
+                        f"(aggregate over {counted} matches, each replayed twice from "
+                        "the same seed) the winner was identical "
+                        f"{agree}/{counted} times whether every card_effect question "
+                        "was answered the ordinary self-play way ('unavailable') or "
+                        "with a real, per-card-type point value. If scoring actually "
+                        "read what gets recorded for a card, giving it real points "
+                        "instead of none should change the outcome on more than a "
+                        "sliver of seeds. Agreement this high means whatever sums "
+                        "points is not reading the catalog at all, or is reading it "
+                        "after the state holding the card has already been reset or "
+                        "discarded - the exact way the first compiled Sushi Go module "
+                        "stayed 0-0 for an entire live match while a pudding-count "
+                        "tiebreak alone still picked a winner."
+                    ),
+                )
+            )
     return report

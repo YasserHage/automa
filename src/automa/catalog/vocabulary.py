@@ -60,10 +60,16 @@ VOCABULARY: dict[str, Op] = {
                     "tiers[0], the 2nd brings the total to tiers[1], and so on.")),
         Op("score_majority", ("first",), ("second", "count_field"),
            summary=("Compare a total against the opponent when scoring: most scores "
-                    "`first`, second-most scores `second`, ties split.")),
+                    "`first`, second-most scores `second`, ties split. The total is "
+                    "built only from `gain(resource=count_field, amount=...)` on every "
+                    "card that contributes to it - give each contributing card its own "
+                    "`gain`, with the amount that specific card is worth (1 if every "
+                    "copy counts equally, its printed value if copies differ).")),
         Op("score_at_end", ("first",), ("last", "count_field"),
            summary=("Like score_majority but resolved once at the very end of the game "
-                    "rather than each round.")),
+                    "rather than each round. Same rule: the total is built from "
+                    "`gain(resource=count_field, amount=...)` on every contributing "
+                    "card, never from `count_field` alone.")),
         Op("score_per_resource", ("resource", "per", "points"),
            summary=("Score `points` for every `per` units of a resource still held at "
                     "the end.")),

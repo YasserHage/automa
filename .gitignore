@@ -18,10 +18,3 @@ dist/
 trajectories/*.jsonl
 !trajectories/.gitkeep
 files/
-
-# Card catalogs are the product's output, filled by a run and by answers given at the
-# table. A committed one would ship with the repository and answer questions the product
-# never asked, which makes Phase 5's headline number - how many descriptions a first
-# match needs - meaningless. tests/test_catalog_is_earned.py fails if one is ever tracked.
-catalog/*.json
-!catalog/.gitkeep

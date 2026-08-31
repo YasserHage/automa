@@ -499,6 +499,12 @@ function onLearned(data) {
 
 function onMatchEnd(data) {
   dropTransient();
+  if (data.final_view) {
+    say("system", "Final board", data.final_view)?.lastChild.style.setProperty(
+      "white-space",
+      "pre-wrap"
+    );
+  }
   const lines = [
     data.summary,
     `turns ${data.turns} · plies ${data.plies} · facts supplied ${data.informed}`,

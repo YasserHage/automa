@@ -98,24 +98,46 @@ def test_forget_is_the_only_way_to_dislodge_a_wrong_permanent_answer(
     assert "chopsticks" not in store.load("nim", sandboxed / "nim.json").entries
 
 
-def test_terms_declared_is_false_for_whatever_games_are_installed(sandboxed: Path) -> None:
-    """Doubles as the tripwire for when the editor's "unchecked" warning comes down.
+def test_terms_declared_follows_what_each_module_actually_declares(sandboxed: Path) -> None:
+    """`terms_declared` is what the editor hides its unchecked-value warning on.
 
-    No installed game declares `TERMS` today, so `store.terms_for()` returns `None`
-    and `vocabulary.unsupported()` skips all name-checking on the four
-    `NAMED_FIELDS`. When a compiled module finally declares them, this fails and the
-    warning should go.
+    This began life as a tripwire asserting that *no* installed game declared `TERMS`,
+    which was true when the warning was written and stopped being true the moment a
+    compiled Sushi Go module declared them - so it failed on a correct system, which is
+    the wrong shape for a test. The durable claim is per-game rather than global: the
+    flag the UI reads must agree with what the module itself declares, so the warning
+    appears for exactly the games whose names nothing can check.
     """
     from automa.web.services.games import loadable_games
 
-    declared = {
-        name: service.get_catalog(name, load_game(name))["terms_declared"]
-        for name in loadable_games()
-    }
-    assert not any(declared.values()), (
-        f"a game now declares TERMS ({declared}); the catalog editor's unchecked-value "
-        "warning can come down for it"
-    )
+    for name in loadable_games():
+        game = load_game(name)
+        declared = service.get_catalog(name, game)["terms_declared"]
+        assert declared == (getattr(game, "TERMS", None) is not None), (
+            f"{name}: get_catalog reports terms_declared={declared} but the module "
+            f"{'declares' if hasattr(game, 'TERMS') else 'does not declare'} TERMS"
+        )
+
+
+def test_a_game_declaring_terms_is_told_which_names_are_allowed(sandboxed: Path) -> None:
+    """The other half of the hint: a declared game names its terms instead of warning.
+
+    Sushi Go is the first module to declare `TERMS`, which is what makes the
+    `count_field`/`flag`/`resource`/`category` mismatch catchable at all - the class of
+    bug that silently switched off the whole chopsticks mechanic (V4 in the README).
+    """
+    game = load_game("sushigo")
+    catalog = service.get_catalog("sushigo", game)
+    hint = catalog["terms_hint"]
+    assert catalog["terms_declared"] is True
+    # Named per field, not per game: every field the module declares is pinned to its
+    # allowed values, and any field it leaves out still falls back to the naming
+    # convention. Sushi Go declares flag/count_field/category and omits `resource`,
+    # so both halves of that appear here at once.
+    assert "chopsticks" in hint
+    assert "maki" in hint and "pudding" in hint
+    assert "nigiri" in hint
+    assert "`resource`" in hint and "has not declared which names it uses" in hint
 
 
 def test_the_terms_hint_is_offered_when_nothing_is_declared(sandboxed: Path) -> None:

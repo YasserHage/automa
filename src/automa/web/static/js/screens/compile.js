@@ -243,6 +243,21 @@ async function mountJob(root, id) {
         }
       }
     },
+    catalog_start: (data) => {
+      logLine(`drafting the card catalog with ${data.model}, from ${data.source}`);
+    },
+    catalog_drafted: (data) => {
+      logLine(
+        `catalog: ${data.known.length} drafted, ${data.parked.length} parked, ` +
+          `${data.not_described.length} left for the table`
+      );
+    },
+    catalog_failed: (data) => {
+      logLine(`catalog draft skipped: ${data.message}`);
+    },
+    catalog_skipped: (data) => {
+      logLine(`catalog draft skipped: ${data.reason}`);
+    },
     compile_ready: async (data) => {
       logLine(data.note);
       const refreshed = await api.compileJob(id);
@@ -318,6 +333,23 @@ function showApproval(host, root, id, job) {
         ? el("div", { class: "stack tight" }, [
             el("h3", { text: "The state schema it chose" }),
             el("pre", { class: "mono-block scroll-x", text: String(approval.state_keys) }),
+          ])
+        : null,
+
+      approval.catalog
+        ? el("div", { class: "stack tight" }, [
+            el("h3", { text: "Card catalog" }),
+            el("p", {
+              class: "faint",
+              text:
+                `${approval.catalog.known.length} card(s) drafted, ` +
+                `${approval.catalog.parked.length} parked, ` +
+                `${approval.catalog.not_described.length} left for the table - ` +
+                `saved to ${approval.catalog.path}`,
+            }),
+            list("Drafted", approval.catalog.known),
+            list("Parked - the vocabulary could not express these", approval.catalog.parked),
+            list("Left for the table", approval.catalog.not_described),
           ])
         : null,
 

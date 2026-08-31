@@ -26,6 +26,9 @@ from pathlib import Path
 from typing import Any
 
 from automa import config
+from automa.catalog import store
+from automa.catalog.build import CatalogBuildError, draft_catalog
+from automa.compiler._runner import load_from_path
 from automa.compiler.generate import VIEW_NOTE, catalog_requirements, compile_game
 from automa.compiler.ingest import IngestError
 from automa.compiler.install import InstallPlan, InstallRefused, install_compiled_game, plan_install
@@ -83,6 +86,7 @@ class CompileJob:
     result: Any = None
     error: str | None = None
     plan: InstallPlan | None = None
+    catalog_result: dict[str, Any] | None = None
     trajectory_path: Path | None = None
     llm_calls: int = 0
     cost_usd: float = 0.0
@@ -124,11 +128,90 @@ class CompileJob:
                     "target": str(self.plan.target) if self.plan else None,
                     "target_exists": self.plan.exists if self.plan else False,
                     "target_differs": self.plan.differs if self.plan else False,
+                    "catalog": self.catalog_result,
                 }
                 if self.status == "awaiting_approval" and output is not None
                 else None
             ),
         }
+
+
+def _draft_catalog_for_job(job: CompileJob, *, staging: Path, installed_name: str) -> None:
+    """Draft the card catalog right after a successful compile, before approval.
+
+    Mirrors `automa.scripts.build_catalog`, but against the staged module - a person
+    reviewing whether to install should see what the catalog looks like too, not just
+    the module source. A module that never declares `SUPPORTED_OPS` does not read a
+    catalog at all, same check the CLI makes, so a game with no effect cards drafts
+    nothing here and costs nothing.
+
+    Never fails the compile job. Compiling and drafting are deliberately separate
+    processes that fail separately (see the V4 changelog entry); a broken catalog
+    draft must not throw away an otherwise-good module.
+    """
+    try:
+        module = load_from_path(staging)
+    except Exception as exc:  # noqa: BLE001 - reported, never fatal to the compile
+        job.broadcaster.publish(
+            "catalog_skipped", reason=f"could not read the staged module: {exc}"
+        )
+        return
+
+    supported = getattr(module, "SUPPORTED_OPS", None)
+    if supported is None:
+        return
+
+    # The module's own deck table is the ground truth for card-type names - a catalog
+    # keyed to prose the model invented from the rulebook will never match the string
+    # the module actually looks up. A submitted card list, when there is one, is
+    # additional prose about those same cards, not a second source of names.
+    parts: list[str] = []
+    card_types = store.card_types_for(module)
+    if card_types:
+        parts.append(
+            "Use these names exactly - they are the game module's own card-type "
+            "strings:\n" + "\n".join(f"- {name}" for name in sorted(card_types))
+        )
+    if job.cards is not None:
+        parts.append(job.cards.read_text(encoding="utf-8"))
+    card_material = "\n\n".join(parts)
+
+    catalog = store.load(installed_name)
+    before = len(catalog)
+    job.broadcaster.publish(
+        "catalog_start",
+        game=installed_name,
+        model=config.model_for("catalog_builder"),
+        source=str(job.cards) if job.cards is not None else str(job.material),
+    )
+    try:
+        with BroadcastingTrajectory(
+            f"catalog-{installed_name}", config=config.describe(), broadcaster=job.broadcaster
+        ) as traj:
+            catalog, draft = draft_catalog(
+                installed_name,
+                material=job.material,
+                card_material=card_material,
+                catalog=catalog,
+                supported=set(supported),
+                terms=store.terms_for(module),
+                trajectory=traj,
+            )
+    except CatalogBuildError as exc:
+        job.broadcaster.publish("catalog_failed", message=str(exc))
+        return
+    except Exception as exc:  # noqa: BLE001 - reported, never fatal to the compile
+        job.broadcaster.publish("catalog_failed", message=f"{type(exc).__name__}: {exc}")
+        return
+
+    job.catalog_result = {
+        "known": sorted(catalog.known()),
+        "parked": sorted(catalog.parked()),
+        "not_described": sorted(draft.not_described),
+        "new": len(catalog) - before,
+        "path": str(catalog.path) if catalog.path else None,
+    }
+    job.broadcaster.publish("catalog_drafted", **job.catalog_result)
 
 
 def _run(job: CompileJob) -> None:
@@ -196,6 +279,7 @@ def _run(job: CompileJob) -> None:
 
         installed_name = result.report.get("name") or job.game
         job.plan = plan_install(staging, installed_name=installed_name)
+        _draft_catalog_for_job(job, staging=staging, installed_name=installed_name)
         job.status = "awaiting_approval"
         job.broadcaster.publish(
             "compile_ready",

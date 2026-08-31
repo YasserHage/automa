@@ -29,7 +29,7 @@ from automa import config
 from automa.agents.tactician import tactician_decider
 from automa.catalog import store
 from automa.catalog.informant import catalog_informant, never_asks
-from automa.core.game import AUTOMA, LABEL, PLY, TO_PLAY, TURN, UNAVAILABLE
+from automa.core.game import AUTOMA, LABEL, PLY, TO_PLAY, TURN, UNAVAILABLE, Viewer
 from automa.core.loader import load_game
 from automa.core.match import (
     Decision,
@@ -180,6 +180,15 @@ class MatchSession:
             return
         self.status = "finished"
         unanswered_counts = {k: self.unanswered.count(k) for k in sorted(set(self.unanswered))}
+        # MatchResult carries no game-specific field (invariant 4); the final board -
+        # scores included, for a game that has them - can only come from the game's own
+        # describe_state. Public view: a match-end recap is shown to everyone watching,
+        # not rendered from one player's private seat.
+        final_view = (
+            self.game.describe_state(result.final_state, Viewer.PUBLIC)
+            if result is not None and result.final_state is not None
+            else None
+        )
         self.publish(
             "match_end",
             outcome=result.outcome if result else None,
@@ -194,6 +203,7 @@ class MatchSession:
             learned=list(self.learned),
             unanswered=unanswered_counts,
             summary=result.summary() if result else "",
+            final_view=final_view,
             llm_calls=llm_calls,
             cost_usd=cost_usd,
             trajectory=str(trajectory_path) if trajectory_path else None,

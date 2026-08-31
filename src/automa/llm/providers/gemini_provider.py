@@ -22,6 +22,7 @@ from __future__ import annotations
 import functools
 from typing import Any
 
+import httpx
 from google import genai
 from google.genai import errors, types
 
@@ -30,6 +31,13 @@ from automa.llm.providers.base import LLMRequest, LLMResponse
 #: Effort levels mapped onto Gemini's thinking budget, so callers can express
 #: "think harder" without knowing which provider is behind the seam.
 _EFFORT_BUDGETS = {"low": 0, "medium": 2048, "high": 8192, "xhigh": 16384, "max": 24576}
+
+#: `HttpOptions.timeout` is unset by default, so a congested or wedged server
+#: hangs the call indefinitely - the failure mode this bounds. Milliseconds, per
+#: the SDK's own convention. Retryable (see is_retryable), so a call that hits
+#: this ceiling loses 5 minutes to a fresh attempt rather than the whole compile
+#: losing however long the server was actually going to take.
+_REQUEST_TIMEOUT_MS = 5 * 60 * 1000
 
 
 @functools.lru_cache(maxsize=1)
@@ -113,6 +121,7 @@ class GeminiProvider:
             # tools, so switching AFC off costs nothing and removes the SDK's
             # "direct use of AFC is not recommended" warning as a side effect.
             automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
+            http_options=types.HttpOptions(timeout=_REQUEST_TIMEOUT_MS),
         )
         if request.output_format is not None:
             config.response_mime_type = "application/json"
@@ -174,4 +183,9 @@ class GeminiProvider:
             # 429 matters here: the free tier rate-limits aggressively, and the
             # retry is logged so the trajectory shows the wait rather than hiding it.
             return getattr(exc, "code", None) == 429
+        if isinstance(exc, httpx.TimeoutException | httpx.ConnectError):
+            # What _REQUEST_TIMEOUT_MS turns a hung request into. A wedged
+            # connection is exactly the kind of transient failure a fresh
+            # attempt might not hit again.
+            return True
         return False

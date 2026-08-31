@@ -34,7 +34,7 @@ from automa import config
 from automa.agents.tactician import tactician_decider
 from automa.catalog import store
 from automa.catalog.informant import catalog_informant
-from automa.core.game import AUTOMA, LABEL
+from automa.core.game import AUTOMA, LABEL, Viewer
 from automa.core.loader import GameLoadError, available_games, load_game
 from automa.core.match import (
     Decision,
@@ -325,6 +325,14 @@ def main(argv: list[str] | None = None) -> int:
         calls, cost = traj.llm_calls, traj.total_cost_usd
 
     print(f"\n{RULE}")
+    if result.final_state is not None:
+        # MatchResult carries no game-specific field (invariant 4), so the final board
+        # - scores included, for a game that has them - can only come from the game's
+        # own describe_state, the same call every turn already used. Without this the
+        # match's own final tally is never shown: the last turn a person actually sees
+        # is whatever state existed before the winning action, not the one it produced.
+        print(game.describe_state(result.final_state, Viewer.PUBLIC))
+        print(RULE)
     print(result.summary())
     if result.invariant_violations:
         print(f"WARNING: {len(result.invariant_violations)} invariant violation(s) during play")

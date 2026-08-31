@@ -219,6 +219,33 @@ def terms_for(game_module: Any) -> dict[str, set[str]] | None:
     return {field: set(names) for field, names in declared.items()}
 
 
+#: Names seen in practice for a compiled module's deck table. Not a contract: the
+#: compiler is told to keep the components in a module-level table, but picks its own
+#: name and shape for it every time - a dict keyed by card type, or a flat list with
+#: repeats for the copy count. This is a heuristic over what has actually been observed,
+#: not a guarantee.
+_DECK_ATTR_NAMES = ("DECK_COMPOSITION", "DECK", "FULL_DECK", "CARDS", "CARD_TYPES")
+
+
+def card_types_for(game_module: Any) -> set[str] | None:
+    """The exact card-type strings a module's deck uses, if the module exposes them.
+
+    A catalog drafted from rulebook prose alone has no way to know that "a squid
+    nigiri" must be stored as the literal string ``"squid_nigiri"`` - the module's own
+    deck table is the one place that string actually comes from, so reading it there is
+    strictly more reliable than asking a person to submit a second document that agrees
+    with a compiler's naming choice on a given run. ``None`` means nothing recognisable
+    was found; the draft then runs from prose alone, same as before this existed.
+    """
+    for name in _DECK_ATTR_NAMES:
+        value = getattr(game_module, name, None)
+        if isinstance(value, dict) and value:
+            return {str(key) for key in value}
+        if isinstance(value, list | tuple | set | frozenset) and value:
+            return {str(item) for item in value}
+    return None
+
+
 def load(game: str, path: Path | None = None) -> Catalog:
     """Load a game's catalog, or an empty one if it has never been written.
 

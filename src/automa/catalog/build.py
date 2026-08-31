@@ -56,6 +56,15 @@ which raises a named marker the compiled rules already test for. Recording such 
 inexpressible leaves the module's own rule for it switched off, so the mechanic silently \
 never happens.
 
+Watch for a family of card types that all feed one shared comparison - the material \
+often describes them together in a single passage ("add up the X on every card of this \
+kind; whoever has the most scores..."), and each variant may be worth a different amount \
+even though the comparison is scored once. `score_majority` and `score_at_end` only total \
+what `gain` operations add up: give **every** card in such a family its own `gain` \
+alongside its `score_majority`/`score_at_end`, each with the amount that specific card is \
+worth. Recording the comparison without a `gain` on each contributing card is a silent \
+zero, not a smaller number - the total never moves no matter what is collected.
+
 Record only what the material states. If it does not say what a card does, leave that \
 card out; somebody will be asked about it at the table, which is a normal part of how \
 this system works and is far better than a guess. Do not infer a card's value from its \

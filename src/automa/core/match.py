@@ -189,6 +189,13 @@ class MatchResult:
     first_intervention_turn: int | None = None
     """Turns survived before a human would have had to step in - the primary metric."""
     invariant_violations: list[str] = field(default_factory=list)
+    final_state: State | None = None
+    """The state the match ended on - a plain-play game keeps no score anywhere else.
+
+    ``MatchResult`` deliberately carries no game-specific field (invariant 4), so this
+    is opaque to the core; it exists so a caller can render it through the game's own
+    `describe_state` - the same call every turn already uses - rather than the result
+    having nothing to show for a game whose whole point is its final tally."""
 
     def summary(self) -> str:
         if self.outcome != "terminal":
@@ -359,6 +366,7 @@ def play_match(
 
     result.plies = ply
     result.turns = state[TURN] if isinstance(state, dict) else 0
+    result.final_state = state
     if result.outcome == "terminal":
         if game.is_terminal(state):
             result.winner = game.winner(state)

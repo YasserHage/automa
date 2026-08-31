@@ -74,12 +74,24 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 1
 
-    card_material = ""
+    # The module's own deck table is the ground truth for card-type names - a catalog
+    # keyed to prose the model invented from the rulebook (e.g. "Maki roll") will never
+    # match the string the module actually looks up ("1_maki_roll"). A submitted card
+    # list, when there is one, is additional prose about those same cards, not a second
+    # source of names to reconcile against.
+    parts: list[str] = []
+    card_types = store.card_types_for(game)
+    if card_types:
+        parts.append(
+            "Use these names exactly - they are the game module's own card-type "
+            "strings:\n" + "\n".join(f"- {name}" for name in sorted(card_types))
+        )
     if args.cards:
         if not args.cards.exists():
             print(f"no such file: {args.cards}", file=sys.stderr)
             return 1
-        card_material = args.cards.read_text(encoding="utf-8")
+        parts.append(args.cards.read_text(encoding="utf-8"))
+    card_material = "\n\n".join(parts)
 
     path = args.out or store.CATALOG_DIR / f"{game.NAME}.json"
     catalog = store.load(game.NAME, path)

@@ -23,6 +23,7 @@ from automa.core.game import (
     GameModule,
     Viewer,
     conforms,
+    settle,
 )
 from automa.core.loader import available_games, load_game
 
@@ -32,6 +33,20 @@ GAMES = available_games()
 @pytest.fixture(params=GAMES)
 def game(request: pytest.FixtureRequest) -> ModuleType:
     return load_game(request.param)
+
+
+def playable_state(game: ModuleType, seed: int = 1) -> dict:
+    """A fresh state with every question it declares already answered.
+
+    Since modules began asking the table for the components they are missing, a fresh
+    state is routinely *waiting* rather than ready: `initial_state` returns a state
+    carrying `unknown`, and `legal_actions` must not be called until that is cleared.
+    `settle` is what an offline caller with nobody to ask uses - it answers every
+    question `unavailable`, which is how the module falls back to its own seeded deal.
+    Any test that steps a state, rather than only inspecting its shape, has to go
+    through here first.
+    """
+    return settle(game, game.initial_state(seed))
 
 
 def test_there_are_two_structurally_distant_games() -> None:
@@ -60,14 +75,14 @@ def test_initial_state_is_well_formed(game: ModuleType) -> None:
 
 
 def test_legal_actions_are_non_empty_and_labelled(game: ModuleType) -> None:
-    actions = game.legal_actions(game.initial_state(1))
+    actions = game.legal_actions(playable_state(game))
     assert actions
     for action in actions:
         assert isinstance(action[LABEL], str) and action[LABEL]
 
 
 def test_apply_returns_a_new_state_and_leaves_the_old_one_alone(game: ModuleType) -> None:
-    state = game.initial_state(1)
+    state = playable_state(game)
     before = copy.deepcopy(state)
     new_state = game.apply(state, game.legal_actions(state)[0])
     assert state == before, f"{game.NAME}.apply mutated its input"
