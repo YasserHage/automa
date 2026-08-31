@@ -1,0 +1,19 @@
+# Mirrors .gitignore, plus Docker-specific excludes. The critical one is files/: it
+# holds commercial rulebook PDFs that must never end up baked into an image layer
+# (invariant 6), regardless of what .gitignore already keeps out of git itself.
+.venv/
+venv/
+.env
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+build/
+dist/
+.git/
+.dockerignore
+Dockerfile
+
+files/
+trajectories/*.jsonl
