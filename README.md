@@ -1,11 +1,7 @@
 # Automa — an AI opponent for physical board games
 
-**Everything in this repository was built during the hackathon** — code, prompts, games,
+**Everything in this repository was built during the hackathon[https://www.hackerearth.com/community/challenges/hackathon/micro1-frontier-engineering-challenge-2026/]** — code, prompts, games,
 catalog and eval harness alike; there is no pre-existing project this extends.
-
-**Video walkthrough: `<!-- REPLACE WITH LINK BEFORE SUBMITTING -->`** — the problem, the
-baseline failing on DNUP, one live match demo, the changelog highlights with the biggest
-contributing changes.
 
 ## Problem
 
